@@ -1,7 +1,7 @@
 import os
 
 class Config:
-    SECRET_KEY = "super-secret-key"
+    SECRET_KEY = "b44e742bea2fbe7b2dc6bcae1c410b20f13e4d5f2baae6edf61be6a30f688dfa"
 
     SQLALCHEMY_DATABASE_URI = "sqlite:///placement.db"
     SQLALCHEMY_TRACK_MODIFICATIONS = False
