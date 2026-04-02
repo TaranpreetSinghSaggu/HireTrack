@@ -1,128 +1,114 @@
-from flask import Blueprint, request, jsonify
+from flask_restful import Resource
+from flask import request
 from models import db, User, StudentProfile, CompanyProfile
 from utils.jwt_utils import generate_token
 from datetime import datetime
 
-auth_bp = Blueprint("auth", __name__, url_prefix="/api/auth")
+
+class RegisterStudent(Resource):
+    def post(self):
+        data = request.get_json()
+
+        email = data.get("email", "").lower().strip()
+        password = data.get("password")
+        name = data.get("name")
+
+        if not email or not password or not name:
+            return {"error": "Missing fields"}, 400
+
+        if User.query.filter_by(email=email).first():
+            return {"error": "Email exists"}, 400
+
+        user = User(email=email, role="student")
+        user.set_password(password)
+
+        db.session.add(user)
+        db.session.commit()
+
+        student = StudentProfile(user_id=user.id, name=name)
+        db.session.add(student)
+        db.session.commit()
+
+        return {"message": "Student registered"}, 201
 
 
-@auth_bp.route("/register/student", methods=["POST"])
-def register_student():
+class RegisterCompany(Resource):
+    def post(self):
+        data = request.get_json()
 
-    if not request.is_json:
-        return jsonify({"error": "Request must be JSON"}), 400
+        email = data.get("email", "").lower().strip()
+        password = data.get("password")
+        name = data.get("name")
 
-    data = request.get_json()
+        if not email or not password or not name:
+            return {"error": "Missing fields"}, 400
 
-    email = data.get("email", "").lower().strip()
-    password = data.get("password")
-    name = data.get("name")
+        if User.query.filter_by(email=email).first():
+            return {"error": "Email exists"}, 400
 
-    if not email or not password or not name:
-        return jsonify({"error": "Missing required fields"}), 400
+        user = User(email=email, role="company")
+        user.set_password(password)
 
-    if User.query.filter_by(email=email).first():
-        return jsonify({"error": "Email already registered"}), 400
+        db.session.add(user)
+        db.session.commit()
 
-    # Create user
-    user = User(email=email, role="student")
-    user.set_password(password)
+        company = CompanyProfile(user_id=user.id, name=name)
+        db.session.add(company)
+        db.session.commit()
 
-    db.session.add(user)
-    db.session.commit()
-
-    # Create student profile
-    student = StudentProfile(
-        user_id=user.id,
-        name=name
-    )
-
-    db.session.add(student)
-    db.session.commit()
-
-    return jsonify({"message": "Student registered successfully"}), 201
+        return {"message": "Company registered, waiting approval"}, 201
 
 
-@auth_bp.route("/register/company", methods=["POST"])
-def register_company():
+class Login(Resource):
+    def post(self):
+        data = request.get_json()
 
-    if not request.is_json:
-        return jsonify({"error": "Request must be JSON"}), 400
+        email = data.get("email", "").lower().strip()
+        password = data.get("password")
 
-    data = request.get_json()
+        user = User.query.filter_by(email=email).first()
 
-    email = data.get("email", "").lower().strip()
-    password = data.get("password")
-    name = data.get("name")
+        if not user or not user.check_password(password):
+            return {"error": "Invalid credentials"}, 401
 
-    if not email or not password or not name:
-        return jsonify({"error": "Missing required fields"}), 400
+        if user.role == "company":
+            company = user.company_profile
+            if not company.is_approved:
+                return {"error": "Company not approved"}, 403
 
-    if User.query.filter_by(email=email).first():
-        return jsonify({"error": "Email already registered"}), 400
+        if user.status == "blocked":
+            return {"error": "User blocked"}, 403
 
-    user = User(email=email, role="company")
-    user.set_password(password)
+        user.last_login = datetime.utcnow()
+        db.session.commit()
 
-    db.session.add(user)
-    db.session.commit()
+        token = generate_token(user)
 
-    company = CompanyProfile(
-        user_id=user.id,
-        name=name,
-        is_approved=False
-    )
-
-    db.session.add(company)
-    db.session.commit()
-
-    return jsonify({
-        "message": "Company registered. Waiting for admin approval."
-    }), 201
+        return {
+            "token": token,
+            "role": user.role,
+            "user_id": user.id
+        }, 200
 
 
-@auth_bp.route("/login", methods=["POST"])
-def login():
+class AuthMe(Resource):
+    def get(self):
+        auth_header = request.headers.get("Authorization")
+        if not auth_header:
+            return {"error": "Token missing"}, 401
 
-    if not request.is_json:
-        return jsonify({"error": "Request must be JSON"}), 400
+        try:
+            token = auth_header.split(" ")[1]
+        except IndexError:
+            return {"error": "Token missing"}, 401
 
-    data = request.get_json()
+        from utils.jwt_utils import decode_token
+        data = decode_token(token)
 
-    email = data.get("email", "").lower().strip()
-    password = data.get("password")
+        if "error" in data:
+            return data, 401
 
-    if not email or not password:
-        return jsonify({"error": "Email and password required"}), 400
-
-    user = User.query.filter_by(email=email).first()
-
-    if not user or not user.check_password(password):
-        return jsonify({"error": "Invalid credentials"}), 401
-
-
-    if user.role == "company":
-        company = user.company_profile
-
-        if not company.is_approved:
-            return jsonify({"error": "Company not approved"}), 403
-
-        if company.is_blacklisted:
-            return jsonify({"error": "Company is blacklisted"}), 403
-
-
-    if user.status == "blocked":
-        return jsonify({"error": "User is blocked"}), 403
-
-    user.last_login = datetime.utcnow()
-    db.session.commit()
-
-    # Generate Token
-    token = generate_token(user)
-
-    return jsonify({
-        "message": "Login successful",
-        "token": token,
-        "role": user.role,
-        "user_id": user.id
-    }), 200
+        return {
+            "user_id": data["user_id"],
+            "role": data["role"]
+        }, 200
