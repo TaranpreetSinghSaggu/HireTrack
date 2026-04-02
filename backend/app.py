@@ -17,9 +17,9 @@ def create_app():
 
     # IMPORT ROUTES
     from routes.auth import RegisterStudent, RegisterCompany, Login, AuthMe
-    from routes.student_routes import StudentDashboard, ApplyJob, ViewApplications, StudentJobs, StudentJobDetail, UpdateStudentProfile
-    from routes.company_routes import CompanyDashboard, CreateJob, ViewApplicants, CompanyJobs, UpdateCompanyJob, UpdateApplicationStatus
-    from routes.admin_routes import AdminDashboard, ViewCompanies, ApproveCompany, ApproveJob, ViewJobs, BlacklistCompany, UpdateUserStatus
+    from routes.student_routes import StudentDashboard, ApplyJob, ViewApplications, StudentJobs, StudentJobDetail, UpdateStudentProfile, UploadResume, StudentJobReadiness, InterviewQuestions, StudentStrategy, ApplicationAnalysis
+    from routes.company_routes import CompanyDashboard, CreateJob, ViewApplicants, CompanyJobs, UpdateCompanyJob, UpdateApplicationStatus, CandidateMatchScores, MarketInsight, JobInterviewQuestions
+    from routes.admin_routes import AdminDashboard, ViewCompanies, ApproveCompany, ApproveJob, ViewJobs, BlacklistCompany, UpdateUserStatus, PlacementAnalytics
 
     # AUTH
     api.add_resource(RegisterStudent, "/api/auth/register/student")
@@ -34,6 +34,11 @@ def create_app():
     api.add_resource(StudentJobs, "/api/student/jobs")
     api.add_resource(StudentJobDetail, "/api/student/jobs/<int:job_id>")
     api.add_resource(UpdateStudentProfile, "/api/student/profile")
+    api.add_resource(UploadResume, "/api/student/upload-resume")
+    api.add_resource(StudentJobReadiness, "/api/student/jobs/<int:job_id>/readiness")
+    api.add_resource(InterviewQuestions, "/api/student/interview-questions")
+    api.add_resource(StudentStrategy, "/api/student/strategy")
+    api.add_resource(ApplicationAnalysis, "/api/student/applications/<int:application_id>/analysis")
 
     # COMPANY
     api.add_resource(CompanyDashboard, "/api/company/dashboard")
@@ -42,6 +47,9 @@ def create_app():
     api.add_resource(CompanyJobs, "/api/company/jobs")
     api.add_resource(UpdateCompanyJob, "/api/company/jobs/<int:job_id>")
     api.add_resource(UpdateApplicationStatus, "/api/company/applications/<int:application_id>/status")
+    api.add_resource(CandidateMatchScores, "/api/company/jobs/<int:job_id>/match-scores")
+    api.add_resource(MarketInsight, "/api/company/jobs/<int:job_id>/market-insight")
+    api.add_resource(JobInterviewQuestions, "/api/company/jobs/<int:job_id>/questions")
 
     # ADMIN
     api.add_resource(AdminDashboard, "/api/admin/dashboard")
@@ -51,6 +59,7 @@ def create_app():
     api.add_resource(ViewJobs, "/api/admin/jobs")
     api.add_resource(BlacklistCompany, "/api/admin/companies/<int:company_id>/blacklist")
     api.add_resource(UpdateUserStatus, "/api/admin/users/<int:user_id>/status")
+    api.add_resource(PlacementAnalytics, "/api/admin/analytics/placement")
 
     with app.app_context():
         db.create_all()
