@@ -605,3 +605,39 @@ class ApplicationAnalysis(Resource):
             "reasons": reasons,
             "improvement_suggestions": suggestions,
         }, 200
+
+
+class ExportApplications(Resource):
+    def post(self):
+        _, student, error = get_student_from_request()
+        if error:
+            return error
+
+        from tasks.export_tasks import export_applications
+
+        task = export_applications.delay(student.id)
+        return {"task_id": task.id}, 202
+
+
+class TaskStatus(Resource):
+    def get(self, task_id):
+        token = extract_token(request)
+        if not token:
+            return {"error": "Token missing"}, 401
+
+        data = decode_token(token)
+        if "error" in data:
+            return data, 401
+
+        from celery.result import AsyncResult
+        from celery_worker import celery_app
+
+        task_result = AsyncResult(task_id, app=celery_app)
+
+        response = {"status": task_result.status}
+        if task_result.successful():
+            response["result"] = task_result.result
+        elif task_result.failed():
+            response["result"] = str(task_result.result)
+
+        return response, 200

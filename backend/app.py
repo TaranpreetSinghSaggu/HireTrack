@@ -17,7 +17,7 @@ def create_app():
 
     # IMPORT ROUTES
     from routes.auth import RegisterStudent, RegisterCompany, Login, AuthMe
-    from routes.student_routes import StudentDashboard, ApplyJob, ViewApplications, StudentJobs, StudentJobDetail, UpdateStudentProfile, UploadResume, StudentJobReadiness, InterviewQuestions, StudentStrategy, ApplicationAnalysis
+    from routes.student_routes import StudentDashboard, ApplyJob, ViewApplications, StudentJobs, StudentJobDetail, UpdateStudentProfile, UploadResume, StudentJobReadiness, InterviewQuestions, StudentStrategy, ApplicationAnalysis, ExportApplications, TaskStatus
     from routes.company_routes import CompanyDashboard, CreateJob, ViewApplicants, CompanyJobs, UpdateCompanyJob, UpdateApplicationStatus, CandidateMatchScores, MarketInsight, JobInterviewQuestions
     from routes.admin_routes import AdminDashboard, ViewCompanies, ApproveCompany, ApproveJob, ViewJobs, BlacklistCompany, UpdateUserStatus, PlacementAnalytics
 
@@ -39,6 +39,7 @@ def create_app():
     api.add_resource(InterviewQuestions, "/api/student/interview-questions")
     api.add_resource(StudentStrategy, "/api/student/strategy")
     api.add_resource(ApplicationAnalysis, "/api/student/applications/<int:application_id>/analysis")
+    api.add_resource(ExportApplications, "/api/student/export")
 
     # COMPANY
     api.add_resource(CompanyDashboard, "/api/company/dashboard")
@@ -60,6 +61,7 @@ def create_app():
     api.add_resource(BlacklistCompany, "/api/admin/companies/<int:company_id>/blacklist")
     api.add_resource(UpdateUserStatus, "/api/admin/users/<int:user_id>/status")
     api.add_resource(PlacementAnalytics, "/api/admin/analytics/placement")
+    api.add_resource(TaskStatus, "/api/task/<string:task_id>")
 
     with app.app_context():
         db.create_all()

@@ -7,3 +7,5 @@ Werkzeug==3.0.3
 PyJWT
 requests
 python-dotenv
+celery
+redis
