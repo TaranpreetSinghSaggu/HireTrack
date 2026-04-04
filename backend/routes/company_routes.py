@@ -6,6 +6,7 @@ from datetime import datetime
 import os
 import json
 import requests
+from utils.cache import cache
 
 
 FALLBACK_COMPANY_QUESTIONS = [
@@ -216,17 +217,27 @@ class CreateJob(Resource):
         data = request.get_json()
 
         company = CompanyProfile.query.filter_by(user_id=data_token["user_id"]).first()
+        deadline = parse_deadline(data.get("application_deadline"))
+
+        if not deadline:
+            return {"error": "Invalid application_deadline"}, 400
 
         job = JobPosition(
             company_id=company.id,
             title=data.get("title"),
             description=data.get("description"),
-            application_deadline=data.get("application_deadline"),
+            application_deadline=deadline,
             status="Pending"
         )
 
         db.session.add(job)
         db.session.commit()
+
+        try:
+            cache.delete("student_jobs")
+            cache.delete(f"company_jobs_{company.id}")
+        except Exception:
+            pass
 
         return {"message": "Job created"}, 201
 
@@ -273,16 +284,31 @@ class CompanyJobs(Resource):
         if not company:
             return {"error": "Company not found"}, 404
 
+        cache_key = f"company_jobs_{company.id}"
+        try:
+            cached_jobs = cache.get(cache_key)
+            if cached_jobs:
+                return json.loads(cached_jobs), 200
+        except Exception:
+            pass
+
         jobs = JobPosition.query.filter_by(company_id=company.id).all()
 
-        return [
+        result = [
             {
                 "id": job.id,
                 "title": job.title,
                 "status": job.status,
                 "application_deadline": job.application_deadline.isoformat() if job.application_deadline else None
             } for job in jobs
-        ], 200
+        ]
+
+        try:
+            cache.setex(cache_key, 300, json.dumps(result))
+        except Exception:
+            pass
+
+        return result, 200
 
 
 class UpdateCompanyJob(Resource):
@@ -342,6 +368,12 @@ class UpdateCompanyJob(Resource):
             job.application_deadline = parsed_deadline
 
         db.session.commit()
+
+        try:
+            cache.delete("student_jobs")
+            cache.delete(f"company_jobs_{company.id}")
+        except Exception:
+            pass
 
         return {"message": "Job updated"}, 200
 

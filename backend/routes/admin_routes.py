@@ -2,6 +2,8 @@ from flask_restful import Resource
 from flask import request
 from models import db, CompanyProfile, JobPosition, User, StudentProfile, Application, Placement
 from utils.jwt_utils import extract_token, decode_token
+import json
+from utils.cache import cache
 
 
 class AdminDashboard(Resource):
@@ -12,11 +14,25 @@ class AdminDashboard(Resource):
         if data["role"] != "admin":
             return {"error": "Access denied"}, 403
 
-        return {
+        try:
+            cached_dashboard = cache.get("admin_dashboard")
+            if cached_dashboard:
+                return json.loads(cached_dashboard), 200
+        except Exception:
+            pass
+
+        result = {
             "users": User.query.count(),
             "companies": CompanyProfile.query.count(),
             "jobs": JobPosition.query.count()
         }
+
+        try:
+            cache.setex("admin_dashboard", 300, json.dumps(result))
+        except Exception:
+            pass
+
+        return result
 
 
 class ViewCompanies(Resource):
@@ -51,6 +67,11 @@ class ApproveCompany(Resource):
 
         db.session.commit()
 
+        try:
+            cache.delete("admin_dashboard")
+        except Exception:
+            pass
+
         return {"message": "Company approved"}
 
 
@@ -66,6 +87,13 @@ class ApproveJob(Resource):
         job.status = "Approved"
 
         db.session.commit()
+
+        try:
+            cache.delete("student_jobs")
+            cache.delete("admin_dashboard")
+            cache.delete(f"company_jobs_{job.company_id}")
+        except Exception:
+            pass
 
         return {"message": "Job approved"}
 
@@ -124,6 +152,11 @@ class BlacklistCompany(Resource):
         company.is_blacklisted = is_blacklisted
         db.session.commit()
 
+        try:
+            cache.delete("admin_dashboard")
+        except Exception:
+            pass
+
         return {"message": "Company blacklist updated"}, 200
 
 
@@ -153,6 +186,11 @@ class UpdateUserStatus(Resource):
 
         user.status = status
         db.session.commit()
+
+        try:
+            cache.delete("admin_dashboard")
+        except Exception:
+            pass
 
         return {"message": "User status updated"}, 200
 

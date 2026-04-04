@@ -9,6 +9,7 @@ import re
 from urllib import request as urlrequest
 from urllib.error import HTTPError, URLError
 import requests
+from utils.cache import cache
 
 
 KNOWN_SKILLS = [
@@ -322,6 +323,13 @@ class StudentJobs(Resource):
         if data["role"] != "student":
             return {"error": "Access denied"}, 403
 
+        try:
+            cached_jobs = cache.get("student_jobs")
+            if cached_jobs:
+                return json.loads(cached_jobs), 200
+        except Exception:
+            pass
+
         now = datetime.utcnow()
         jobs = JobPosition.query.filter_by(status="Approved").all()
 
@@ -338,6 +346,11 @@ class StudentJobs(Resource):
                         "application_deadline": job.application_deadline.isoformat()
                     }
                 )
+
+        try:
+            cache.setex("student_jobs", 300, json.dumps(result))
+        except Exception:
+            pass
 
         return result, 200
 
