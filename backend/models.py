@@ -27,7 +27,7 @@ class User(UserMixin, db.Model):
     )
 
     last_login = db.Column(db.DateTime)
-    created_at = db.Column(db.DateTime, default=datetime.now(timezone.utc))
+    created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
 
     # Relationships
     company_profile = db.relationship(
@@ -77,7 +77,7 @@ class CompanyProfile(db.Model):
     approved_by_admin = db.Column(db.Boolean, default=False)
     is_blacklisted = db.Column(db.Boolean, default=False)
 
-    created_at = db.Column(db.DateTime, default=datetime.now(timezone.utc))
+    created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
 
     # Relationships
     job_positions = db.relationship(
@@ -114,11 +114,16 @@ class StudentProfile(db.Model):
     branch = db.Column(db.String(100))
     year = db.Column(db.Integer)
 
+    degree = db.Column(db.String(100))
+    institution = db.Column(db.String(200))
+    passout_year = db.Column(db.Integer)
+    experience = db.Column(db.Text)
+
     resume_filename = db.Column(db.String(200))
     profile_pic = db.Column(db.String(200))
     resume_score = db.Column(db.Float)
 
-    created_at = db.Column(db.DateTime, default=datetime.now(timezone.utc))
+    created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
 
     # Relationships
     applications = db.relationship(
@@ -149,6 +154,7 @@ class JobPosition(db.Model):
     description = db.Column(db.Text, nullable=False)
 
     salary = db.Column(db.Integer)
+    benefits = db.Column(db.Text)
     skills_required = db.Column(db.Text)
     experience_required = db.Column(db.String(50))
     location = db.Column(db.String(100))
@@ -164,7 +170,7 @@ class JobPosition(db.Model):
         default='Pending'
     )
 
-    created_at = db.Column(db.DateTime, default=datetime.now(timezone.utc))
+    created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
 
     # Relationships
     applications = db.relationship(
@@ -197,7 +203,7 @@ class Application(db.Model):
 
     application_date = db.Column(
         db.DateTime,
-        default=datetime.now(timezone.utc)
+        default=lambda: datetime.now(timezone.utc)
     )
 
     status = db.Column(
@@ -205,8 +211,10 @@ class Application(db.Model):
             'Applied',
             'Shortlisted',
             'Interview',
+            'Offer',
             'Selected',
             'Rejected',
+            'Placed',
             name='application_status'
         ),
         default='Applied'
@@ -266,7 +274,7 @@ class Placement(db.Model):
 
     placed_date = db.Column(
         db.DateTime,
-        default=datetime.now(timezone.utc)
+        default=lambda: datetime.now(timezone.utc)
     )
 
     remarks = db.Column(db.Text)
@@ -296,7 +304,7 @@ class Interview(db.Model):
 
     created_at = db.Column(
         db.DateTime,
-        default=datetime.now(timezone.utc)
+        default=lambda: datetime.now(timezone.utc)
     )
 
     def __str__(self):

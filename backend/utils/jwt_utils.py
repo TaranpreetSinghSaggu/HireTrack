@@ -54,8 +54,8 @@ def extract_token(request):
     if not auth_header:
         return None
 
-    try:
-        token = auth_header.split(" ")[1]
-        return token
-    except IndexError:
+    parts = auth_header.split()
+    if len(parts) != 2 or parts[0].lower() != "bearer":
         return None
+
+    return parts[1]

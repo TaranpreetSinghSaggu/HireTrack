@@ -1,15 +1,12 @@
 from flask_restful import Resource
-from flask import current_app, request
-from models import db, StudentProfile, JobPosition, Application
-from utils.jwt_utils import extract_token, decode_token
-from datetime import datetime
+from flask import current_app, g, request
+from models import db, StudentProfile, JobPosition, Application, CompanyProfile, Interview, Placement
+from utils.auth_decorators import jwt_required
+from datetime import datetime, timezone
 import json
-import os
 import re
-from urllib import request as urlrequest
-from urllib.error import HTTPError, URLError
 import requests
-from utils.cache import cache
+from utils.cache import cache_get_json, cache_set_json
 
 
 KNOWN_SKILLS = [
@@ -72,23 +69,21 @@ FALLBACK_QUESTIONS = {
 }
 
 
-def get_student_from_request():
-    token = extract_token(request)
-    if not token:
-        return None, None, ({"error": "Token missing"}, 401)
+def utc_now():
+    return datetime.now(timezone.utc)
 
-    data = decode_token(token)
-    if "error" in data:
-        return None, None, (data, 401)
 
-    if data["role"] != "student":
-        return None, None, ({"error": "Access denied"}, 403)
+def as_utc(value):
+    if not value:
+        return None
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
 
-    student = StudentProfile.query.filter_by(user_id=data["user_id"]).first()
-    if not student:
-        return None, None, ({"error": "Student not found"}, 404)
 
-    return data, student, None
+def is_open_approved_job(job):
+    deadline = as_utc(job.application_deadline)
+    return job.status == "Approved" and deadline is not None and deadline > utc_now()
 
 
 def normalize_skills(value):
@@ -213,66 +208,56 @@ def generate_ai_questions(skill):
             },
             timeout=15,
         )
-
+        response.raise_for_status()
         data = response.json()
-
         content = data["choices"][0]["message"]["content"].strip()
 
-        # clean markdown if present
         if content.startswith("```"):
-            content = content.strip("`")
-            if content.startswith("json"):
-                content = content[4:].strip()
+            lines = content.splitlines()
+            if len(lines) >= 3:
+                content = "\n".join(lines[1:-1]).strip()
 
         questions = json.loads(content)
-
         if isinstance(questions, list):
             return questions[:5]
 
-    except Exception:
-        pass
+    except (requests.RequestException, KeyError, IndexError, json.JSONDecodeError) as error:
+        print(f"AIPIPE question generation failed, using fallback: {error}")
 
     return get_fallback_questions(skill)
 
 
 class StudentDashboard(Resource):
+    @jwt_required(role="student")
     def get(self):
-        token = extract_token(request)
-        data = decode_token(token)
-
-        if "error" in data:
-            return data, 401
-
-        if data["role"] != "student":
-            return {"error": "Access denied"}, 403
-
-        student = StudentProfile.query.filter_by(user_id=data["user_id"]).first()
-
+        student = g.current_student
         return {
             "name": student.name,
-            "cgpa": student.cgpa
-        }
+            "cgpa": student.cgpa,
+            "branch": student.branch,
+            "year": student.year,
+            "skills": student.skills,
+        }, 200
 
 
 class ApplyJob(Resource):
+    @jwt_required(role="student")
     def post(self):
-        token = extract_token(request)
-        data_token = decode_token(token)
-
-        if "error" in data_token:
-            return data_token, 401
-
-        if data_token["role"] != "student":
-            return {"error": "Access denied"}, 403
-
-        data = request.get_json()
+        student = g.current_student
+        data = request.get_json(silent=True) or {}
         job_id = data.get("job_id")
 
-        student = StudentProfile.query.filter_by(user_id=data_token["user_id"]).first()
-        job = JobPosition.query.get(job_id)
+        job = db.session.get(JobPosition, job_id)
 
         if not job:
             return {"error": "Job not found"}, 404
+
+        if not is_open_approved_job(job):
+            return {"error": "Job is not open for applications"}, 400
+
+        company = db.session.get(CompanyProfile, job.company_id)
+        if not company or not company.is_approved or company.is_blacklisted:
+            return {"error": "Company is not eligible for applications"}, 400
 
         existing = Application.query.filter_by(student_id=student.id, job_id=job_id).first()
         if existing:
@@ -286,102 +271,120 @@ class ApplyJob(Resource):
 
 
 class ViewApplications(Resource):
+    @jwt_required(role="student")
     def get(self):
-        token = extract_token(request)
-        data = decode_token(token)
+        student = g.current_student
+        apps = Application.query.filter_by(student_id=student.id).order_by(
+            Application.application_date.desc()
+        ).all()
 
-        if "error" in data:
-            return data, 401
+        result = []
+        for application in apps:
+            job = db.session.get(JobPosition, application.job_id)
+            company = db.session.get(CompanyProfile, job.company_id) if job else None
+            interview = Interview.query.filter_by(application_id=application.id).first()
 
-        if data["role"] != "student":
-            return {"error": "Access denied"}, 403
+            result.append(
+                {
+                    "application_id": application.id,
+                    "job_id": application.job_id,
+                    "job_title": job.title if job else "Unknown",
+                    "company_name": company.name if company else "Unknown",
+                    "status": application.status,
+                    "application_date": application.application_date.isoformat()
+                    if application.application_date
+                    else None,
+                    "notes": application.notes,
+                    "interview": {
+                        "interview_date": interview.interview_date.isoformat(),
+                        "interview_link": interview.interview_link,
+                        "venue": interview.venue,
+                        "notes": interview.notes,
+                    }
+                    if interview
+                    else None,
+                }
+            )
 
-        student = StudentProfile.query.filter_by(user_id=data["user_id"]).first()
-
-        apps = Application.query.filter_by(student_id=student.id).all()
-
-        return [
-            {
-                "id": a.id,
-                "job_id": a.job_id,
-                "status": a.status
-            } for a in apps
-        ]
+        return result, 200
 
 
 class StudentJobs(Resource):
+    @jwt_required(role="student")
     def get(self):
-        token = extract_token(request)
-        if not token:
-            return {"error": "Token missing"}, 401
+        company_query = request.args.get("company", "").strip().lower()
+        position_query = request.args.get("position", "").strip().lower()
+        skills_query = request.args.get("skills", "").strip().lower()
+        cache_key = f"student_jobs:{company_query}:{position_query}:{skills_query}"
 
-        data = decode_token(token)
+        cached_jobs = cache_get_json(cache_key)
+        if cached_jobs:
+            return cached_jobs, 200
 
-        if "error" in data:
-            return data, 401
-
-        if data["role"] != "student":
-            return {"error": "Access denied"}, 403
-
-        try:
-            cached_jobs = cache.get("student_jobs")
-            if cached_jobs:
-                return json.loads(cached_jobs), 200
-        except Exception:
-            pass
-
-        now = datetime.utcnow()
         jobs = JobPosition.query.filter_by(status="Approved").all()
 
         result = []
         for job in jobs:
-            if job.application_deadline and job.application_deadline > now:
-                result.append(
-                    {
-                        "id": job.id,
-                        "title": job.title,
-                        "description": job.description,
-                        "location": job.location,
-                        "salary": job.salary,
-                        "application_deadline": job.application_deadline.isoformat()
-                    }
-                )
+            if not is_open_approved_job(job):
+                continue
 
-        try:
-            cache.setex("student_jobs", 300, json.dumps(result))
-        except Exception:
-            pass
+            company = db.session.get(CompanyProfile, job.company_id)
+            if not company or not company.is_approved or company.is_blacklisted:
+                continue
+
+            if company_query and company_query not in company.name.lower():
+                continue
+            if position_query and position_query not in job.title.lower():
+                continue
+            if skills_query and skills_query not in (job.skills_required or "").lower():
+                continue
+
+            result.append(
+                {
+                    "id": job.id,
+                    "company_id": job.company_id,
+                    "company_name": company.name,
+                    "title": job.title,
+                    "description": job.description,
+                    "location": job.location,
+                    "salary": job.salary,
+                    "benefits": job.benefits,
+                    "skills_required": job.skills_required,
+                    "experience_required": job.experience_required,
+                    "min_cgpa": job.min_cgpa,
+                    "eligible_branches": job.eligible_branches,
+                    "eligible_year": job.eligible_year,
+                    "application_deadline": job.application_deadline.isoformat(),
+                }
+            )
+
+        cache_set_json(cache_key, result)
 
         return result, 200
 
 
 class StudentJobDetail(Resource):
+    @jwt_required(role="student")
     def get(self, job_id):
-        token = extract_token(request)
-        if not token:
-            return {"error": "Token missing"}, 401
-
-        data = decode_token(token)
-
-        if "error" in data:
-            return data, 401
-
-        if data["role"] != "student":
-            return {"error": "Access denied"}, 403
-
-        job = JobPosition.query.get(job_id)
+        job = db.session.get(JobPosition, job_id)
         if not job:
             return {"error": "Job not found"}, 404
 
-        now = datetime.utcnow()
-        if job.status != "Approved" or not job.application_deadline or job.application_deadline <= now:
+        if not is_open_approved_job(job):
+            return {"error": "Job not found"}, 404
+
+        company = db.session.get(CompanyProfile, job.company_id)
+        if not company or not company.is_approved or company.is_blacklisted:
             return {"error": "Job not found"}, 404
 
         return {
             "id": job.id,
+            "company_id": job.company_id,
+            "company_name": company.name,
             "title": job.title,
             "description": job.description,
             "salary": job.salary,
+            "benefits": job.benefits,
             "skills_required": job.skills_required,
             "experience_required": job.experience_required,
             "location": job.location,
@@ -394,24 +397,10 @@ class StudentJobDetail(Resource):
 
 
 class UpdateStudentProfile(Resource):
+    @jwt_required(role="student")
     def patch(self):
-        token = extract_token(request)
-        if not token:
-            return {"error": "Token missing"}, 401
-
-        data_token = decode_token(token)
-
-        if "error" in data_token:
-            return data_token, 401
-
-        if data_token["role"] != "student":
-            return {"error": "Access denied"}, 403
-
-        student = StudentProfile.query.filter_by(user_id=data_token["user_id"]).first()
-        if not student:
-            return {"error": "Student not found"}, 404
-
-        data = request.get_json()
+        student = g.current_student
+        data = request.get_json(silent=True) or {}
         if not data:
             return {"error": "No data provided"}, 400
 
@@ -423,6 +412,18 @@ class UpdateStudentProfile(Resource):
             student.branch = data.get("branch")
         if "year" in data:
             student.year = data.get("year")
+        if "contact" in data:
+            student.contact = data.get("contact")
+        if "name" in data:
+            student.name = data.get("name")
+        if "degree" in data:
+            student.degree = data.get("degree")
+        if "institution" in data:
+            student.institution = data.get("institution")
+        if "passout_year" in data:
+            student.passout_year = data.get("passout_year")
+        if "experience" in data:
+            student.experience = data.get("experience")
 
         db.session.commit()
 
@@ -430,11 +431,9 @@ class UpdateStudentProfile(Resource):
 
 
 class UploadResume(Resource):
+    @jwt_required(role="student")
     def post(self):
-        _, student, error = get_student_from_request()
-        if error:
-            return error
-
+        student = g.current_student
         data = request.get_json()
         if not data:
             return {"error": "No data provided"}, 400
@@ -448,6 +447,9 @@ class UploadResume(Resource):
         extracted_email = extract_email_from_text(resume_text)
 
         student.skills = ", ".join(extracted_skills)
+        student.resume_filename = (
+            f"resume_student_{student.id}_{utc_now().strftime('%Y%m%d%H%M%S')}.txt"
+        )
         db.session.commit()
 
         return {
@@ -455,21 +457,19 @@ class UploadResume(Resource):
             "name": extracted_name,
             "email": extracted_email,
             "skills": extracted_skills,
+            "resume_filename": student.resume_filename,
         }, 200
 
 
 class StudentJobReadiness(Resource):
+    @jwt_required(role="student")
     def get(self, job_id):
-        _, student, error = get_student_from_request()
-        if error:
-            return error
-
-        job = JobPosition.query.get(job_id)
+        student = g.current_student
+        job = db.session.get(JobPosition, job_id)
         if not job:
             return {"error": "Job not found"}, 404
 
-        now = datetime.utcnow()
-        if job.status != "Approved" or not job.application_deadline or job.application_deadline <= now:
+        if not is_open_approved_job(job):
             return {"error": "Job not found"}, 404
 
         result = calculate_readiness(student, job)
@@ -477,11 +477,8 @@ class StudentJobReadiness(Resource):
 
 
 class InterviewQuestions(Resource):
+    @jwt_required(role="student")
     def get(self):
-        _, _, error = get_student_from_request()
-        if error:
-            return error
-
         skill = request.args.get("skill", "").strip()
         if not skill:
             return {"error": "skill is required"}, 400
@@ -491,22 +488,20 @@ class InterviewQuestions(Resource):
 
 
 class StudentStrategy(Resource):
+    @jwt_required(role="student")
     def get(self):
-        _, student, error = get_student_from_request()
-        if error:
-            return error
-
-        now = datetime.utcnow()
+        student = g.current_student
+        now = utc_now()
         available_jobs = JobPosition.query.filter_by(status="Approved").all()
         open_jobs = [
             job for job in available_jobs
-            if job.application_deadline and job.application_deadline > now
+            if is_open_approved_job(job)
         ]
 
         applied_jobs = []
         applications = Application.query.filter_by(student_id=student.id).all()
         for application in applications:
-            job = JobPosition.query.get(application.job_id)
+            job = db.session.get(JobPosition, application.job_id)
             if job:
                 applied_jobs.append(job)
 
@@ -519,7 +514,7 @@ class StudentStrategy(Resource):
                     "title": job.title,
                     "score": readiness["score"],
                     "missing_skills": readiness["missing_skills"],
-                    "application_deadline": job.application_deadline,
+                    "application_deadline": as_utc(job.application_deadline),
                 }
             )
 
@@ -577,19 +572,17 @@ class StudentStrategy(Resource):
 
 
 class ApplicationAnalysis(Resource):
+    @jwt_required(role="student")
     def get(self, application_id):
-        _, student, error = get_student_from_request()
-        if error:
-            return error
-
-        application = Application.query.get(application_id)
+        student = g.current_student
+        application = db.session.get(Application, application_id)
         if not application:
             return {"error": "Application not found"}, 404
 
         if application.student_id != student.id:
             return {"error": "Access denied"}, 403
 
-        job = JobPosition.query.get(application.job_id)
+        job = db.session.get(JobPosition, application.job_id)
         if not job:
             return {"error": "Job not found"}, 404
 
@@ -620,12 +613,75 @@ class ApplicationAnalysis(Resource):
         }, 200
 
 
-class ExportApplications(Resource):
-    def post(self):
-        _, student, error = get_student_from_request()
-        if error:
-            return error
+class StudentInterviews(Resource):
+    @jwt_required(role="student")
+    def get(self):
+        student = g.current_student
+        applications = Application.query.filter_by(student_id=student.id).all()
+        result = []
+        for application in applications:
+            interview = Interview.query.filter_by(application_id=application.id).first()
+            if not interview:
+                continue
 
+            job = db.session.get(JobPosition, application.job_id)
+            company = db.session.get(CompanyProfile, job.company_id) if job else None
+            result.append(
+                {
+                    "interview_id": interview.id,
+                    "application_id": application.id,
+                    "job_id": application.job_id,
+                    "job_title": job.title if job else "Unknown",
+                    "company_name": company.name if company else "Unknown",
+                    "interview_date": interview.interview_date.isoformat(),
+                    "interview_link": interview.interview_link,
+                    "venue": interview.venue,
+                    "notes": interview.notes,
+                    "application_status": application.status,
+                }
+            )
+
+        result.sort(key=lambda item: item["interview_date"])
+        return result, 200
+
+
+class StudentPlacements(Resource):
+    @jwt_required(role="student")
+    def get(self):
+        student = g.current_student
+        placements = Placement.query.filter_by(student_id=student.id).all()
+        result = []
+        for placement in placements:
+            application = db.session.get(Application, placement.application_id)
+            job = db.session.get(JobPosition, application.job_id) if application else None
+            company = db.session.get(CompanyProfile, placement.company_id)
+            result.append(
+                {
+                    "placement_id": placement.id,
+                    "application_id": placement.application_id,
+                    "job_id": job.id if job else None,
+                    "job_title": job.title if job else placement.position,
+                    "company_name": company.name if company else "Unknown",
+                    "position": placement.position,
+                    "salary": placement.salary,
+                    "joining_date": placement.joining_date.isoformat()
+                    if placement.joining_date
+                    else None,
+                    "placed_date": placement.placed_date.isoformat()
+                    if placement.placed_date
+                    else None,
+                    "offer_letter": placement.offer_letter,
+                    "remarks": placement.remarks,
+                }
+            )
+
+        return result, 200
+
+
+class ExportApplications(Resource):
+    @jwt_required(role="student")
+    def post(self):
+        student = g.current_student
         from tasks.export_tasks import export_applications
 
         task = export_applications.delay(student.id)
@@ -633,15 +689,8 @@ class ExportApplications(Resource):
 
 
 class TaskStatus(Resource):
+    @jwt_required()
     def get(self, task_id):
-        token = extract_token(request)
-        if not token:
-            return {"error": "Token missing"}, 401
-
-        data = decode_token(token)
-        if "error" in data:
-            return data, 401
-
         from celery.result import AsyncResult
         from celery_worker import celery_app
 

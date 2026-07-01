@@ -1,13 +1,14 @@
 from flask_restful import Resource
-from flask import request
+from flask import g, request
 from models import db, User, StudentProfile, CompanyProfile
+from utils.auth_decorators import jwt_required
 from utils.jwt_utils import generate_token
-from datetime import datetime
+from datetime import datetime, timezone
 
 
 class RegisterStudent(Resource):
     def post(self):
-        data = request.get_json()
+        data = request.get_json(silent=True) or {}
 
         email = data.get("email", "").lower().strip()
         password = data.get("password")
@@ -34,7 +35,7 @@ class RegisterStudent(Resource):
 
 class RegisterCompany(Resource):
     def post(self):
-        data = request.get_json()
+        data = request.get_json(silent=True) or {}
 
         email = data.get("email", "").lower().strip()
         password = data.get("password")
@@ -61,7 +62,7 @@ class RegisterCompany(Resource):
 
 class Login(Resource):
     def post(self):
-        data = request.get_json()
+        data = request.get_json(silent=True) or {}
 
         email = data.get("email", "").lower().strip()
         password = data.get("password")
@@ -75,11 +76,13 @@ class Login(Resource):
             company = user.company_profile
             if not company.is_approved:
                 return {"error": "Company not approved"}, 403
+            if company.is_blacklisted:
+                return {"error": "Company blacklisted"}, 403
 
         if user.status == "blocked":
             return {"error": "User blocked"}, 403
 
-        user.last_login = datetime.utcnow()
+        user.last_login = datetime.now(timezone.utc)
         db.session.commit()
 
         token = generate_token(user)
@@ -92,23 +95,9 @@ class Login(Resource):
 
 
 class AuthMe(Resource):
+    @jwt_required()
     def get(self):
-        auth_header = request.headers.get("Authorization")
-        if not auth_header:
-            return {"error": "Token missing"}, 401
-
-        try:
-            token = auth_header.split(" ")[1]
-        except IndexError:
-            return {"error": "Token missing"}, 401
-
-        from utils.jwt_utils import decode_token
-        data = decode_token(token)
-
-        if "error" in data:
-            return data, 401
-
         return {
-            "user_id": data["user_id"],
-            "role": data["role"]
+            "user_id": g.current_user.id,
+            "role": g.current_user.role
         }, 200

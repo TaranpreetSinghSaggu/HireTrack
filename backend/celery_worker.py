@@ -22,7 +22,7 @@ def make_celery(app):
         broker_url=app.config["CELERY_BROKER_URL"],
         result_backend=app.config["CELERY_RESULT_BACKEND"],
         beat_schedule=app.config.get("CELERY_BEAT_SCHEDULE", {}),
-        timezone="America/Toronto",
+        timezone="UTC",
         EXPORT_FOLDER=app.config.get("EXPORT_FOLDER"),
         ADMIN_EMAIL=app.config.get("ADMIN_EMAIL"),
     )

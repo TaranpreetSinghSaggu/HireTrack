@@ -5,10 +5,31 @@ from celery.schedules import crontab
 load_dotenv()
 
 
+BASE_DIR = os.path.dirname(__file__)
+
+
+def resolve_database_url():
+    database_url = os.getenv("DATABASE_URL")
+    if not database_url:
+        db_path = os.path.join(BASE_DIR, "placement.db")
+        return "sqlite:///" + db_path.replace("\\", "/")
+
+    sqlite_prefix = "sqlite:///"
+    if database_url.startswith(sqlite_prefix):
+        db_path = database_url[len(sqlite_prefix):]
+        if db_path and not os.path.isabs(db_path):
+            db_path = os.path.join(BASE_DIR, db_path)
+            return sqlite_prefix + db_path.replace("\\", "/")
+
+    return database_url
+
+
 class Config:
     SECRET_KEY = os.getenv("SECRET_KEY", "b44e742bea2fbe7b2dc6bcae1c410b20f13e4d5f2baae6edf61be6a30f688dfa")
+    ADMIN_EMAIL = os.getenv("ADMIN_EMAIL", "admin@ppa.com")
+    ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "admin123")
 
-    SQLALCHEMY_DATABASE_URI = os.getenv("DATABASE_URL", "sqlite:///placement.db")
+    SQLALCHEMY_DATABASE_URI = resolve_database_url()
     SQLALCHEMY_TRACK_MODIFICATIONS = False
 
     AIPIPE_API_KEY = os.getenv("AIPIPE_API_KEY")
@@ -23,10 +44,9 @@ class Config:
     MAIL_USERNAME = os.getenv("MAIL_USERNAME")
     MAIL_PASSWORD = os.getenv("MAIL_PASSWORD")
     MAIL_DEFAULT_SENDER = os.getenv("MAIL_DEFAULT_SENDER", "noreply@example.com")
-    ADMIN_EMAIL = os.getenv("ADMIN_EMAIL", "admin@ppa.com")
     EXPORT_FOLDER = os.getenv(
         "EXPORT_FOLDER",
-        os.path.join(os.path.dirname(__file__), "exports"),
+        os.path.join(BASE_DIR, "exports"),
     )
 
     CELERY_BEAT_SCHEDULE = {
@@ -37,5 +57,9 @@ class Config:
         "monthly-placement-report": {
             "task": "tasks.report_tasks.generate_monthly_report",
             "schedule": crontab(hour=9, minute=0, day_of_month=1),
+        },
+        "daily-interview-reminders": {
+            "task": "tasks.email_tasks.send_interview_reminders",
+            "schedule": crontab(hour=8, minute=0),
         },
     }
