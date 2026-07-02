@@ -29,9 +29,11 @@ def export_applications(student_id):
         writer.writerow(
             [
                 "type",
+                "student_id",
                 "application_id",
                 "job_id",
                 "job_title",
+                "company_name",
                 "status",
                 "application_date",
                 "placement_id",
@@ -45,13 +47,16 @@ def export_applications(student_id):
 
         for application in applications:
             job = db.session.get(JobPosition, application.job_id)
+            company = db.session.get(CompanyProfile, job.company_id) if job else None
             placement = Placement.query.filter_by(application_id=application.id).first()
             writer.writerow(
                 [
                     "application",
+                    student.id,
                     application.id,
                     application.job_id,
                     job.title if job else "",
+                    company.name if company else "",
                     application.status,
                     application.application_date.isoformat() if application.application_date else "",
                     placement.id if placement else "",

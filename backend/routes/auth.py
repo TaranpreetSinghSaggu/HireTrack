@@ -53,7 +53,14 @@ class RegisterCompany(Resource):
         db.session.add(user)
         db.session.commit()
 
-        company = CompanyProfile(user_id=user.id, name=name)
+        company = CompanyProfile(
+            user_id=user.id,
+            name=name,
+            hr_contact=data.get("hr_contact"),
+            website=data.get("website"),
+            industry=data.get("industry"),
+            location=data.get("location"),
+        )
         db.session.add(company)
         db.session.commit()
 

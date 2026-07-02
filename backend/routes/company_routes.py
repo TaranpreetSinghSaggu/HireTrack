@@ -204,6 +204,12 @@ class CompanyDashboard(Resource):
             ).count()
 
         return {
+            "company_id": company.id,
+            "company_name": company.name,
+            "industry": company.industry,
+            "location": company.location,
+            "website": company.website,
+            "hr_contact": company.hr_contact,
             "total_jobs": len(jobs),
             "active_jobs": sum(1 for job in jobs if job.status == "Approved"),
             "pending_jobs": sum(1 for job in jobs if job.status == "Pending"),
@@ -211,6 +217,15 @@ class CompanyDashboard(Resource):
             "total_applications": total_applications,
             "shortlisted_count": shortlisted_count,
             "selected_count": selected_count,
+            "placement_drives": [
+                {
+                    "job_id": job.id,
+                    "title": job.title,
+                    "status": job.status,
+                    "applicant_count": Application.query.filter_by(job_id=job.id).count(),
+                }
+                for job in jobs
+            ],
         }, 200
 
 

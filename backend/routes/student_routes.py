@@ -86,6 +86,34 @@ def is_open_approved_job(job):
     return job.status == "Approved" and deadline is not None and deadline > utc_now()
 
 
+def get_eligibility_reasons(student, job):
+    reasons = []
+
+    if job.min_cgpa is not None:
+        if student.cgpa is None or student.cgpa < job.min_cgpa:
+            reasons.append(f"CGPA must be at least {job.min_cgpa}")
+
+    if job.eligible_year is not None:
+        if student.year is None or student.year != job.eligible_year:
+            reasons.append(f"Student year must be {job.eligible_year}")
+
+    if job.eligible_branches:
+        allowed_branches = [
+            branch.strip().lower()
+            for branch in job.eligible_branches.split(",")
+            if branch.strip()
+        ]
+        student_branch = (student.branch or "").strip().lower()
+        if allowed_branches and student_branch not in allowed_branches:
+            reasons.append("Student branch is not eligible")
+
+    return reasons
+
+
+def is_student_eligible(student, job):
+    return len(get_eligibility_reasons(student, job)) == 0
+
+
 def normalize_skills(value):
     if not value:
         return []
@@ -259,6 +287,13 @@ class ApplyJob(Resource):
         if not company or not company.is_approved or company.is_blacklisted:
             return {"error": "Company is not eligible for applications"}, 400
 
+        eligibility_reasons = get_eligibility_reasons(student, job)
+        if eligibility_reasons:
+            return {
+                "error": "Student is not eligible for this drive",
+                "reasons": eligibility_reasons,
+            }, 400
+
         existing = Application.query.filter_by(student_id=student.id, job_id=job_id).first()
         if existing:
             return {"error": "Already applied"}, 400
@@ -315,7 +350,8 @@ class StudentJobs(Resource):
         company_query = request.args.get("company", "").strip().lower()
         position_query = request.args.get("position", "").strip().lower()
         skills_query = request.args.get("skills", "").strip().lower()
-        cache_key = f"student_jobs:{company_query}:{position_query}:{skills_query}"
+        eligible_only = request.args.get("eligible_only", "").strip().lower() == "true"
+        cache_key = f"student_jobs:{company_query}:{position_query}:{skills_query}:{eligible_only}"
 
         cached_jobs = cache_get_json(cache_key)
         if cached_jobs:
@@ -339,6 +375,11 @@ class StudentJobs(Resource):
             if skills_query and skills_query not in (job.skills_required or "").lower():
                 continue
 
+            eligibility_reasons = get_eligibility_reasons(g.current_student, job)
+            is_eligible = len(eligibility_reasons) == 0
+            if eligible_only and not is_eligible:
+                continue
+
             result.append(
                 {
                     "id": job.id,
@@ -354,6 +395,8 @@ class StudentJobs(Resource):
                     "min_cgpa": job.min_cgpa,
                     "eligible_branches": job.eligible_branches,
                     "eligible_year": job.eligible_year,
+                    "is_eligible": is_eligible,
+                    "eligibility_reasons": eligibility_reasons,
                     "application_deadline": job.application_deadline.isoformat(),
                 }
             )
@@ -391,6 +434,8 @@ class StudentJobDetail(Resource):
             "min_cgpa": job.min_cgpa,
             "eligible_branches": job.eligible_branches,
             "eligible_year": job.eligible_year,
+            "is_eligible": is_student_eligible(g.current_student, job),
+            "eligibility_reasons": get_eligibility_reasons(g.current_student, job),
             "application_deadline": job.application_deadline.isoformat(),
             "status": job.status
         }, 200
