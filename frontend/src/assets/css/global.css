@@ -1,31 +1,53 @@
-:root {
-  --primary: #02164f;
-  --accent: #00d4ff;
-  --background: #f5f7fa;
-  --card: #ffffff;
-  --border: #e5e7eb;
-  --text: #1f2937;
-  --muted: #6b7280;
-  --success: #22c55e;
-  --danger: #ef4444;
+@import "./theme.css";
+
+/* Entire Website */
+
+body{
+
+    margin:0;
+
+    padding:0;
+
+    background:var(--background);
+
+    color:var(--text);
+
+    font-family:'Segoe UI',Tahoma,Geneva,Verdana,sans-serif;
+
 }
 
-body {
-  background: var(--background);
-  color: var(--text);
-  font-family: "Segoe UI", sans-serif;
+/* Links */
+
+a{
+
+    text-decoration:none;
+
 }
 
-.card {
-  border: none;
-  border-radius: 12px;
+/* Bootstrap Card */
+
+.card{
+
+    background:var(--card);
+
+    border:1px solid var(--border);
+
+    border-radius:12px;
+
 }
 
-.btn-primary {
-  background: var(--primary);
-  border: none;
+/* Bootstrap Primary Button */
+
+.btn-primary{
+
+    background:var(--primary);
+
+    border:none;
+
 }
 
-.btn-primary:hover {
-  background: #03206e;
+.btn-primary:hover{
+
+    background:var(--secondary);
+
 }

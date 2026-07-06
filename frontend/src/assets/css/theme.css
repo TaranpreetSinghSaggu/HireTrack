@@ -1,0 +1,35 @@
+:root{
+
+    /* Primary Colors */
+
+    --primary:#0A66C2;
+
+    --secondary:#1D4ED8;
+
+    /* Background */
+
+    --background:#F3F6F8;
+
+    /* Cards */
+
+    --card:#FFFFFF;
+
+    /* Text */
+
+    --text:#1F2937;
+
+    --text-light:#6B7280;
+
+    /* Border */
+
+    --border:#D9DDE3;
+
+    /* Status */
+
+    --success:#16A34A;
+
+    --warning:#F59E0B;
+
+    --danger:#DC2626;
+
+}
