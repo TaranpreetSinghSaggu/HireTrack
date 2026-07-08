@@ -18,6 +18,7 @@ import AdminStudents from "../views/admin/Students.vue";
 import AdminCompanies from "../views/admin/Companies.vue";
 import AdminJobs from "../views/admin/Jobs.vue";
 import AdminApplications from "../views/admin/Applications.vue";
+import Home from "../views/Home.vue"
 
 const router = createRouter({
 
@@ -27,8 +28,7 @@ const router = createRouter({
 
         {
             path:"/",
-            name: "Root",
-            redirect:"/login"
+            component:Home
         },
 
         {

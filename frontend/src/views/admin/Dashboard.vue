@@ -1,6 +1,6 @@
 <template>
 
-    <DashboardLayout>
+    <DashboardLayout role="admin">
 
         <!-- Welcome -->
 

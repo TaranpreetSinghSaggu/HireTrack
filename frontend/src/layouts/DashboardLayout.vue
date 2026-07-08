@@ -2,23 +2,17 @@
 
     <div class="dashboard">
 
-        <!-- Navbar -->
-
         <Navbar />
 
         <div class="container-fluid">
 
             <div class="row">
 
-                <!-- Sidebar -->
-
                 <div class="col-md-2 p-0">
 
-                    <Sidebar />
+                    <Sidebar :role="role" />
 
                 </div>
-
-                <!-- Page Content -->
 
                 <div class="col-md-10 p-4">
 
@@ -39,15 +33,22 @@
 import Navbar from "../components/navbar/Navbar.vue"
 import Sidebar from "../components/sidebar/Sidebar.vue"
 
+defineProps({
+
+    role: {
+        type: String,
+        default: "student"
+    }
+
+})
+
 </script>
 
 <style scoped>
 
 .dashboard{
-
     background: var(--background);
     min-height: 100vh;
-
 }
 
 </style>

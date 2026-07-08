@@ -1,6 +1,6 @@
 <template>
 
-    <DashboardLayout>
+    <DashboardLayout role="student">
 
         <!-- Welcome -->
 
