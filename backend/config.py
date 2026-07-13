@@ -32,7 +32,8 @@ class Config:
     SQLALCHEMY_DATABASE_URI = resolve_database_url()
     SQLALCHEMY_TRACK_MODIFICATIONS = False
 
-    AIPIPE_API_KEY = os.getenv("AIPIPE_API_KEY")
+    GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+    GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
     REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
     CELERY_BROKER_URL = os.getenv("CELERY_BROKER_URL", REDIS_URL)
     CELERY_RESULT_BACKEND = os.getenv("CELERY_RESULT_BACKEND", REDIS_URL)

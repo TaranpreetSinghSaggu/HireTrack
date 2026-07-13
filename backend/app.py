@@ -35,7 +35,7 @@ def create_app():
     from routes.auth import RegisterStudent, RegisterCompany, Login, AuthMe
     from routes.student_routes import StudentDashboard, ApplyJob, ViewApplications, StudentJobs, StudentJobDetail, UpdateStudentProfile, UploadResume, StudentJobReadiness, InterviewQuestions, StudentStrategy, ApplicationAnalysis, StudentInterviews, StudentPlacements, ExportApplications, TaskStatus
     from routes.company_routes import CompanyDashboard, CreateJob, ViewApplicants, CompanyJobs, UpdateCompanyJob, UpdateApplicationStatus, CandidateMatchScores, MarketInsight, JobInterviewQuestions, ScheduleInterview, GetInterviewsForJob, CloseJob, ExportCompanyApplications
-    from routes.admin_routes import AdminDashboard, ViewCompanies, ViewStudents, ApproveCompany, RemoveCompany, ApproveJob, RejectJob, ViewJobs, ViewAllApplications, BlacklistCompany, UpdateUserStatus, PlacementAnalytics
+    from routes.admin_routes import AdminDashboard, PublicDashboard, ViewCompanies, ViewStudents, ApproveCompany, RemoveCompany, ApproveJob, RejectJob, ViewJobs, ViewAllApplications, BlacklistCompany, UpdateUserStatus, ExportAdminReport, PlacementAnalytics
 
     # AUTH
     api.add_resource(RegisterStudent, "/api/auth/register/student")
@@ -50,7 +50,7 @@ def create_app():
     api.add_resource(StudentJobs, "/api/student/jobs")
     api.add_resource(StudentJobDetail, "/api/student/jobs/<int:job_id>")
     api.add_resource(UpdateStudentProfile, "/api/student/profile")
-    api.add_resource(UploadResume, "/api/student/upload-resume")
+    api.add_resource(UploadResume, "/api/student/resume")
     api.add_resource(StudentJobReadiness, "/api/student/jobs/<int:job_id>/readiness")
     api.add_resource(InterviewQuestions, "/api/student/interview-questions")
     api.add_resource(StudentStrategy, "/api/student/strategy")
@@ -75,6 +75,7 @@ def create_app():
     api.add_resource(ExportCompanyApplications, "/api/company/export")
 
     # ADMIN
+    api.add_resource(PublicDashboard, "/api/dashboard")
     api.add_resource(AdminDashboard, "/api/admin/dashboard")
     api.add_resource(ViewCompanies, "/api/admin/companies")
     api.add_resource(ViewStudents, "/api/admin/students")
@@ -86,6 +87,7 @@ def create_app():
     api.add_resource(ViewAllApplications, "/api/admin/applications")
     api.add_resource(BlacklistCompany, "/api/admin/companies/<int:company_id>/blacklist")
     api.add_resource(UpdateUserStatus, "/api/admin/users/<int:user_id>/status")
+    api.add_resource(ExportAdminReport, "/api/admin/reports/export-pdf")
     api.add_resource(PlacementAnalytics, "/api/admin/analytics/placement")
     api.add_resource(TaskStatus, "/api/task/<string:task_id>")
 

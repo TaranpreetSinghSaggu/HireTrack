@@ -9,6 +9,7 @@ instance/
 *.sqlite3
 *.db
 *.db-journal
+celerybeat-schedule
 backend/exports/
 
 # Environment variables
