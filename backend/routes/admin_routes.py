@@ -1,15 +1,70 @@
-from flask import request
+from datetime import datetime, timezone
+import os
+
+from flask import current_app, request, send_file
 from flask_restful import Resource
 
 from models import Application, CompanyProfile, JobPosition, Placement, StudentProfile, User, db
 from utils.auth_decorators import jwt_required
 from utils.cache import cache_delete, cache_get_json, cache_set_json, delete_pattern
+from utils.mail_utils import send_email
 
 
 def clear_admin_cache():
     cache_delete("admin_dashboard")
     delete_pattern("admin_companies*")
     delete_pattern("admin_students*")
+
+
+def notify_admin_action(user, action):
+    """Notify the account holder about an administrative change."""
+    if not user or not user.email:
+        return
+    send_email(
+        user.email,
+        f"Account update: {action} - HireTrack",
+        f"An administrator has {action.lower()} for your HireTrack account.",
+    )
+
+
+def write_pdf_report(file_path):
+    """Create a dependency-free PDF using the built-in Helvetica font."""
+    lines = ["HireTrack Administration Report", f"Generated: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}", ""]
+    lines.append("STUDENTS")
+    for student in StudentProfile.query.order_by(StudentProfile.name).all():
+        lines.append(f"{student.name} | {student.contact or '-'} | {student.branch or '-'} | CGPA: {student.cgpa or '-'} | Skills: {student.skills or '-'}")
+    lines.extend(["", "COMPANIES"])
+    for company in CompanyProfile.query.order_by(CompanyProfile.name).all():
+        status = "Blocked" if company.is_blacklisted else ("Approved" if company.is_approved else "Pending")
+        lines.append(f"{company.name} | {company.industry or '-'} | {company.location or '-'} | {status}")
+    lines.extend(["", "STUDENT-COMPANY RELATIONSHIPS"])
+    for application in Application.query.order_by(Application.application_date.desc()).all():
+        student_name = application.student.name if application.student else "Unknown"
+        company_name = application.job.company.name if application.job and application.job.company else "Unknown"
+        job_title = application.job.title if application.job else "Unknown"
+        lines.append(f"{student_name} | {company_name} | {job_title} | {application.status} | {'Placed' if application.placement else '-'}")
+
+    def escape(text):
+        return str(text).replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
+
+    pages = [lines[index:index + 46] for index in range(0, len(lines), 46)] or [[]]
+    objects = ["<< /Type /Catalog /Pages 2 0 R >>", "<< /Type /Pages /Kids [" + " ".join(f"{3 + index * 2} 0 R" for index in range(len(pages))) + f"] /Count {len(pages)} >>"]
+    for index, page_lines in enumerate(pages):
+        page_id = 3 + index * 2
+        content_id = page_id + 1
+        stream = "BT /F1 9 Tf 36 806 Td 12 TL " + " ".join(f"({escape(line)[:150]}) Tj T*" for line in page_lines) + " ET"
+        objects.append(f"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >> >> >> /Contents {content_id} 0 R >>")
+        objects.append(f"<< /Length {len(stream.encode('latin-1', 'replace'))} >>\nstream\n{stream}\nendstream")
+    output = "%PDF-1.4\n"
+    offsets = [0]
+    for number, obj in enumerate(objects, start=1):
+        offsets.append(len(output.encode("latin-1", "replace")))
+        output += f"{number} 0 obj\n{obj}\nendobj\n"
+    xref = len(output.encode("latin-1", "replace"))
+    output += f"xref\n0 {len(objects) + 1}\n0000000000 65535 f \n" + "".join(f"{offset:010d} 00000 n \n" for offset in offsets[1:])
+    output += f"trailer\n<< /Size {len(objects) + 1} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF"
+    with open(file_path, "wb") as pdf_file:
+        pdf_file.write(output.encode("latin-1", "replace"))
 
 
 class AdminDashboard(Resource):
@@ -35,6 +90,50 @@ class AdminDashboard(Resource):
         cache_set_json("admin_dashboard", result)
 
         return result, 200
+
+
+class PublicDashboard(Resource):
+    """A privacy-safe overview for the public landing dashboard."""
+
+    def get(self):
+        status_counts = {
+            status: Application.query.filter_by(status=status).count()
+            for status in ("Applied", "Shortlisted", "Interview", "Offer", "Selected", "Placed")
+        }
+        active_jobs = JobPosition.query.filter_by(status="Approved").count()
+        placements = Placement.query.count()
+        students = StudentProfile.query.count()
+
+        recent_jobs = (
+            JobPosition.query.filter_by(status="Approved")
+            .order_by(JobPosition.created_at.desc())
+            .limit(4)
+            .all()
+        )
+
+        return {
+            "total_students": students,
+            "total_companies": CompanyProfile.query.filter_by(
+                is_approved=True, is_blacklisted=False
+            ).count(),
+            "active_jobs": active_jobs,
+            "total_applications": Application.query.count(),
+            "placement_rate": round((placements / students) * 100, 1) if students else 0,
+            "application_funnel": status_counts,
+            "recent_jobs": [
+                {
+                    "id": job.id,
+                    "title": job.title,
+                    "company": job.company.name if job.company else "Company",
+                    "location": job.location,
+                    "salary": job.salary,
+                    "min_cgpa": job.min_cgpa,
+                    "application_deadline": job.application_deadline.isoformat()
+                    if job.application_deadline else None,
+                }
+                for job in recent_jobs
+            ],
+        }, 200
 
 
 class ViewCompanies(Resource):
@@ -87,16 +186,13 @@ class ViewStudents(Resource):
     def get(self):
         name_query = request.args.get("name", "").strip()
         contact_query = request.args.get("contact", "").strip()
-        student_id = request.args.get("id", "").strip()
-        cache_key = f"admin_students:{name_query}:{contact_query}:{student_id}"
+        cache_key = f"admin_students:{name_query}:{contact_query}"
 
         cached_students = cache_get_json(cache_key)
         if cached_students:
             return cached_students, 200
 
         query = StudentProfile.query
-        if student_id.isdigit():
-            query = query.filter_by(id=int(student_id))
         if name_query:
             query = query.filter(StudentProfile.name.ilike(f"%{name_query}%"))
         if contact_query:
@@ -117,6 +213,7 @@ class ViewStudents(Resource):
                 "passout_year": s.passout_year,
                 "experience": s.experience,
                 "user_id": s.user_id,
+                "status": s.user.status if s.user else "active",
             }
             for s in students
         ]
@@ -138,6 +235,7 @@ class ApproveCompany(Resource):
 
         db.session.commit()
         clear_admin_cache()
+        notify_admin_action(company.user, "approved your company")
 
         return {"message": "Company approved"}, 200
 
@@ -151,6 +249,8 @@ class RemoveCompany(Resource):
 
         company_cache_id = company.id
         user = db.session.get(User, company.user_id)
+
+        notify_admin_action(user, "removed your company account")
 
         Placement.query.filter_by(company_id=company.id).delete()
         db.session.delete(company)
@@ -176,6 +276,7 @@ class ApproveJob(Resource):
 
         db.session.commit()
         clear_admin_cache()
+        notify_admin_action(job.company.user if job.company else None, f"approved the {job.title} job posting")
 
         delete_pattern("student_jobs*")
         cache_delete(f"company_jobs_{job.company_id}")
@@ -191,12 +292,15 @@ class RejectJob(Resource):
             return {"error": "Job not found"}, 404
 
         company_id = job.company_id
+        company_user = job.company.user if job.company else None
+        job_title = job.title
         db.session.delete(job)
         db.session.commit()
 
         clear_admin_cache()
         delete_pattern("student_jobs*")
         cache_delete(f"company_jobs_{company_id}")
+        notify_admin_action(company_user, f"removed the {job_title} job posting")
 
         return {"message": "Job posting removed"}, 200
 
@@ -205,13 +309,9 @@ class ViewJobs(Resource):
     @jwt_required(role="admin")
     def get(self):
         status_filter = request.args.get("status", "").strip()
-        company_id_filter = request.args.get("company_id", "").strip()
-
         query = JobPosition.query
         if status_filter:
             query = query.filter_by(status=status_filter)
-        if company_id_filter.isdigit():
-            query = query.filter_by(company_id=int(company_id_filter))
 
         jobs = query.order_by(JobPosition.created_at.desc()).all()
 
@@ -241,13 +341,9 @@ class ViewAllApplications(Resource):
     @jwt_required(role="admin")
     def get(self):
         status_filter = request.args.get("status", "").strip()
-        job_id_filter = request.args.get("job_id", "").strip()
-
         query = Application.query
         if status_filter:
             query = query.filter_by(status=status_filter)
-        if job_id_filter.isdigit():
-            query = query.filter_by(job_id=int(job_id_filter))
 
         applications = query.order_by(Application.application_date.desc()).all()
         result = []
@@ -290,6 +386,10 @@ class BlacklistCompany(Resource):
         company.is_blacklisted = is_blacklisted
         db.session.commit()
         clear_admin_cache()
+        notify_admin_action(
+            company.user,
+            "blocked your company" if is_blacklisted else "unblocked your company",
+        )
 
         delete_pattern("student_jobs*")
         cache_delete(f"company_jobs_{company.id}")
@@ -313,8 +413,20 @@ class UpdateUserStatus(Resource):
         user.status = status
         db.session.commit()
         clear_admin_cache()
+        notify_admin_action(user, "blocked your account" if status == "blocked" else "unblocked your account")
 
         return {"message": "User status updated"}, 200
+
+
+class ExportAdminReport(Resource):
+    @jwt_required(role="admin")
+    def get(self):
+        export_folder = current_app.config["EXPORT_FOLDER"]
+        os.makedirs(export_folder, exist_ok=True)
+        filename = f"hiretrack_admin_report_{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}.pdf"
+        file_path = os.path.join(export_folder, filename)
+        write_pdf_report(file_path)
+        return send_file(file_path, mimetype="application/pdf", as_attachment=True, download_name=filename)
 
 
 class PlacementAnalytics(Resource):
