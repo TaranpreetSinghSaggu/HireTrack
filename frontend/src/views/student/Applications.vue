@@ -1,88 +1,88 @@
 <template>
-
-    <DashboardLayout role="student">
-
-        <h2 class="mb-4">
-            My Applications
-        </h2>
-
-        <div class="card">
-
-            <div class="card-body">
-
-                <table class="table table-hover">
-
-                    <thead>
-
-                        <tr>
-
-                            <th>Company</th>
-                            <th>Position</th>
-                            <th>Date</th>
-                            <th>Status</th>
-
-                        </tr>
-
-                    </thead>
-
-                    <tbody>
-
-                        <tr>
-
-                            <td>Google</td>
-                            <td>SDE Intern</td>
-                            <td>07 Jul 2026</td>
-
-                            <td>
-                                <span class="badge bg-warning">
-                                    Shortlisted
-                                </span>
-                            </td>
-
-                        </tr>
-
-                        <tr>
-
-                            <td>Microsoft</td>
-                            <td>Backend Developer</td>
-                            <td>05 Jul 2026</td>
-
-                            <td>
-                                <span class="badge bg-primary">
-                                    Applied
-                                </span>
-                            </td>
-
-                        </tr>
-
-                        <tr>
-
-                            <td>Adobe</td>
-                            <td>ML Engineer</td>
-                            <td>03 Jul 2026</td>
-
-                            <td>
-                                <span class="badge bg-success">
-                                    Selected
-                                </span>
-                            </td>
-
-                        </tr>
-
-                    </tbody>
-
-                </table>
-
-            </div>
-
-        </div>
-
-    </DashboardLayout>
-
+  <PageHeader
+    title="Applications"
+    description="Track status, interviews, rejection analysis, and export your application history."
+  >
+    <template #actions
+      ><AppButton
+        label="Export"
+        icon="download"
+        variant="secondary"
+        :loading="exporting"
+        @click="startExport"
+    /></template>
+  </PageHeader>
+  <AlertMessage :message="message" :tone="tone" />
+  <LoadingState v-if="loading" />
+  <EmptyState
+    v-else-if="!apps.length"
+    title="No applications yet"
+    description="Browse eligible jobs to start applying."
+  />
+  <div v-else class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Role</th>
+          <th>Company</th>
+          <th>Status</th>
+          <th>Interview</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr v-for="app in apps" :key="app.application_id">
+          <td>{{ app.job_title }}</td>
+          <td>{{ app.company_name }}</td>
+          <td><StatusBadge :status="app.status" /></td>
+          <td>
+            {{
+              app.interview
+                ? formatDate(app.interview.interview_date)
+                : "Not scheduled"
+            }}
+          </td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
 </template>
 
 <script setup>
+import { onMounted, ref } from "vue";
+import PageHeader from "@/components/PageHeader.vue";
+import LoadingState from "@/components/LoadingState.vue";
+import EmptyState from "@/components/EmptyState.vue";
+import AppButton from "@/components/AppButton.vue";
+import StatusBadge from "@/components/StatusBadge.vue";
+import AlertMessage from "@/components/AlertMessage.vue";
+import { studentApi } from "@/services/student";
+import { getErrorMessage } from "@/services/http";
 
-import DashboardLayout from "../../layouts/DashboardLayout.vue"
-
+const apps = ref([]);
+const loading = ref(true);
+const exporting = ref(false);
+const message = ref("");
+const tone = ref("info");
+const formatDate = (value) =>
+  value ? new Date(value).toLocaleString() : "Not set";
+onMounted(async () => {
+  apps.value = (await studentApi.applications()).data;
+  loading.value = false;
+});
+async function startExport() {
+  exporting.value = true;
+  try {
+    const { data } = await studentApi.exportApplications();
+    message.value = `Export started. Task ${data.task_id}`;
+    tone.value = "success";
+  } catch (error) {
+    message.value = getErrorMessage(error);
+    tone.value = "danger";
+  } finally {
+    exporting.value = false;
+  }
+}
 </script>
+
+<style scoped>
+</style>
