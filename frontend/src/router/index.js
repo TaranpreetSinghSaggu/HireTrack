@@ -1,136 +1,142 @@
 import { createRouter, createWebHistory } from "vue-router";
+import { useAuthStore } from "@/stores/auth";
+import AuthLayout from "@/layouts/AuthLayout.vue";
+import DashboardLayout from "@/layouts/DashboardLayout.vue";
 
-import Login from "../views/auth/Login.vue";
-import StudentRegister from "../views/auth/StudentRegister.vue";
-import CompanyRegister from "../views/auth/CompanyRegister.vue";
-import StudentDashboard from "../views/student/Dashboard.vue";
-import StudentJobs from "../views/student/Jobs.vue";
-import StudentApplications from "../views/student/Applications.vue";
-import StudentProfile from "../views/student/Profile.vue";
-
-import CompanyDashboard from "../views/company/Dashboard.vue";
-import CompanyJobs from "../views/company/Jobs.vue";
-import CompanyApplicants from "../views/company/Applicants.vue";
-import CompanyInterviews from "../views/company/Interviews.vue";
-
-import AdminDashboard from "../views/admin/Dashboard.vue";
-import AdminStudents from "../views/admin/Students.vue";
-import AdminCompanies from "../views/admin/Companies.vue";
-import AdminJobs from "../views/admin/Jobs.vue";
-import AdminApplications from "../views/admin/Applications.vue";
-import Home from "../views/Home.vue"
+const routes = [
+  {
+    path: "/",
+    redirect: "/dashboard",
+  },
+  {
+    path: "/dashboard",
+    name: "dashboard",
+    component: () => import("@/views/Dashboard.vue"),
+  },
+  {
+    path: "/",
+    component: AuthLayout,
+    children: [
+      {
+        path: "login",
+        name: "login",
+        component: () => import("@/views/auth/Login.vue"),
+      },
+      {
+        path: "register/student",
+        component: () => import("@/views/auth/StudentRegister.vue"),
+      },
+      {
+        path: "register/company",
+        component: () => import("@/views/auth/CompanyRegister.vue"),
+      },
+    ],
+  },
+  {
+    path: "/student",
+    component: DashboardLayout,
+    meta: { requiresAuth: true, role: "student" },
+    children: [
+      { path: "", component: () => import("@/views/student/Dashboard.vue") },
+      {
+        path: "profile",
+        component: () => import("@/views/student/Profile.vue"),
+      },
+      { path: "jobs", component: () => import("@/views/student/Jobs.vue") },
+      {
+        path: "jobs/:id",
+        component: () => import("@/views/student/JobDetail.vue"),
+      },
+      {
+        path: "applications",
+        component: () => import("@/views/student/Applications.vue"),
+      },
+      {
+        path: "readiness",
+        component: () => import("@/views/student/Readiness.vue"),
+      },
+      {
+        path: "interviews",
+        component: () => import("@/views/student/Interviews.vue"),
+      },
+      {
+        path: "placements",
+        component: () => import("@/views/student/Placements.vue"),
+      },
+    ],
+  },
+  {
+    path: "/company",
+    component: DashboardLayout,
+    meta: { requiresAuth: true, role: "company" },
+    children: [
+      { path: "", component: () => import("@/views/company/Dashboard.vue") },
+      { path: "jobs", component: () => import("@/views/company/Jobs.vue") },
+      {
+        path: "jobs/new",
+        component: () => import("@/views/company/JobWizard.vue"),
+      },
+      {
+        path: "jobs/:id",
+        component: () => import("@/views/company/JobDetail.vue"),
+      },
+      {
+        path: "jobs/:id/applicants",
+        component: () => import("@/views/company/Applicants.vue"),
+      },
+      {
+        path: "applicants",
+        component: () => import("@/views/company/ApplicantsHome.vue"),
+      },
+      {
+        path: "interviews",
+        component: () => import("@/views/company/Interviews.vue"),
+      },
+      {
+        path: "reports",
+        component: () => import("@/views/company/Reports.vue"),
+      },
+    ],
+  },
+  {
+    path: "/admin",
+    component: DashboardLayout,
+    meta: { requiresAuth: true, role: "admin" },
+    children: [
+      { path: "", component: () => import("@/views/admin/Dashboard.vue") },
+      {
+        path: "students",
+        component: () => import("@/views/admin/Students.vue"),
+      },
+      {
+        path: "companies",
+        component: () => import("@/views/admin/Companies.vue"),
+      },
+      { path: "jobs", component: () => import("@/views/admin/Jobs.vue") },
+      {
+        path: "applications",
+        component: () => import("@/views/admin/Applications.vue"),
+      },
+      {
+        path: "placements",
+        component: () => import("@/views/admin/Placements.vue"),
+      },
+    ],
+  },
+];
 
 const router = createRouter({
+  history: createWebHistory(),
+  routes,
+});
 
-    history: createWebHistory(),
+router.beforeEach(async (to) => {
+  const auth = useAuthStore();
+  if (!auth.restored) await auth.restore();
+  if (to.meta.requiresAuth && !auth.isAuthenticated) return "/login";
+  if (to.meta.role && auth.role !== to.meta.role) return auth.homeRoute;
+  if (to.name === "login" && auth.isAuthenticated) return auth.homeRoute;
+  return true;
+});
 
-    routes:[
-
-        {
-            path:"/",
-            component:Home
-        },
-
-        {
-            path:"/login",
-            name: "Login",
-            component:Login
-        },
-
-        {
-            path:"/register/student",
-            name: "RegisterStudent",
-            component:StudentRegister
-        },
-
-        {
-            path:"/register/company",
-            name: "RegisterCompany",
-            component:CompanyRegister
-        }
-
-        ,
-
-        {
-            path:"/student/dashboard",
-            name: "StudentDashboard",
-            component:StudentDashboard
-        },
-
-        {
-            path:"/student/jobs",
-            name: "StudentJobs",
-            component:StudentJobs
-        },
-
-        {
-            path:"/student/applications",
-            name: "StudentApplications",
-            component:StudentApplications
-        },
-
-        {
-            path:"/student/profile",
-            name: "StudentProfile",
-            component:StudentProfile
-        },
-
-        {
-            path:"/company/dashboard",
-            name: "CompanyDashboard",
-            component:CompanyDashboard
-        },
-
-        {
-            path:"/company/jobs",
-            name: "CompanyJobs",
-            component:CompanyJobs
-        },
-
-        {
-            path:"/company/applicants",
-            name: "CompanyApplicants",
-            component:CompanyApplicants
-        },
-
-        {
-            path:"/company/interviews",
-            name: "CompanyInterviews",
-            component:CompanyInterviews
-        },
-
-        {
-            path:"/admin/dashboard",
-            name: "AdminDashboard",
-            component:AdminDashboard
-        },
-
-        {
-            path:"/admin/students",
-            name: "AdminStudents",
-            component:AdminStudents
-        },
-
-        {
-            path:"/admin/companies",
-            name: "AdminCompanies",
-            component:AdminCompanies
-        },
-
-        {
-            path:"/admin/jobs",
-            name: "AdminJobs",
-            component:AdminJobs
-        },
-
-        {
-            path:"/admin/applications",
-            name: "AdminApplications",
-            component:AdminApplications
-        }
-
-    ]
-
-})
-
-export default router
+export default router;
