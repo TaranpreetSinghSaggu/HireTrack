@@ -1,4 +1,5 @@
 from flask_restful import Resource
+from utils.gemini import generate_gemini_content
 from flask import current_app, g, request
 from models import db, CompanyProfile, JobPosition, Application, StudentProfile, Interview, Placement
 from utils.auth_decorators import jwt_required
@@ -127,9 +128,8 @@ def is_student_match(student, job):
 
 
 def generate_job_questions(job):
-    api_key = current_app.config["AIPIPE_API_KEY"]
-    if not api_key:
-        return FALLBACK_COMPANY_QUESTIONS
+    if not current_app.config.get("GEMINI_API_KEY"):
+        return []
 
     skills_required = job.skills_required or job.title or "general technical skills"
     prompt = (
@@ -140,41 +140,19 @@ def generate_job_questions(job):
         "Return only a JSON array of strings."
     )
 
-    payload = {
-        "model": "openai/gpt-4.1-nano",
-        "messages": [
-            {
-                "role": "user",
-                "content": prompt,
-            }
-        ],
-        "temperature": 0.3,
-    }
-
     try:
-        response = requests.post(
-            "https://aipipe.org/openrouter/v1/chat/completions",
-            headers={
-                "Authorization": f"Bearer {api_key}",
-                "Content-Type": "application/json",
-            },
-            json=payload,
-            timeout=15,
-        )
-        response.raise_for_status()
-        body = response.json()
-        content = body["choices"][0]["message"]["content"].strip()
+        content_ai = generate_gemini_content(prompt, temperature=0.3, timeout=15)
 
-        if content.startswith("```"):
-            lines = content.splitlines()
+        if content_ai.startswith("```"):
+            lines = content_ai.splitlines()
             if len(lines) >= 3:
-                content = "\n".join(lines[1:-1]).strip()
+                content_ai = "\n".join(lines[1:-1]).strip()
 
-        parsed = json.loads(content)
+        parsed = json.loads(content_ai)
         if isinstance(parsed, list) and len(parsed) >= 5:
             return parsed[:5]
-    except (requests.RequestException, KeyError, IndexError, json.JSONDecodeError) as error:
-        print(f"AIPIPE job question generation failed, using fallback: {error}")
+    except Exception as error:
+        print(f"Gemini job question generation failed: {error}")
 
     return FALLBACK_COMPANY_QUESTIONS
 
@@ -468,7 +446,13 @@ class CandidateMatchScores(Resource):
             match = calculate_candidate_match(student, job)
             results.append(
                 {
+                    "application_id": application.id,
+                    "student_id": application.student_id,
                     "student_name": student.name,
+                    "student_branch": student.branch,
+                    "student_cgpa": student.cgpa,
+                    "student_skills": student.skills,
+                    "status": application.status,
                     "score": match["score"],
                     "matched_skills": match["matched_skills"],
                     "missing_skills": match["missing_skills"],
@@ -478,7 +462,7 @@ class CandidateMatchScores(Resource):
             )
 
         results.sort(key=lambda item: item["score"], reverse=True)
-        return results[:10], 200
+        return results, 200
 
 
 class MarketInsight(Resource):
