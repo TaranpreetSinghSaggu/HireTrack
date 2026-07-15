@@ -17,9 +17,14 @@
         icon="calendar-check"
       />
       <StatCard
+        label="Offers"
+        :value="data.stats?.offers || 0"
+        icon="award"
+      />
+      <StatCard
         label="Placements"
         :value="data.stats?.placed || 0"
-        icon="award"
+        icon="person-check"
       />
     </div>
     <div class="card panel">

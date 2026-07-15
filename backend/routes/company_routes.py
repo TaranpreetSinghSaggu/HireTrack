@@ -1,11 +1,16 @@
 from flask_restful import Resource
 from utils.gemini import generate_gemini_content
-from flask import current_app, g, request
-from models import db, CompanyProfile, JobPosition, Application, StudentProfile, Interview, Placement
+import os
+
+from flask import current_app, g, request, send_file
+from models import db, CompanyProfile, JobPosition, Application, ApplicationStatusHistory, StudentProfile, Interview, Placement
 from utils.auth_decorators import jwt_required
+from utils.mail_utils import send_email
 from datetime import datetime, timezone
 import json
 import requests
+from werkzeug.utils import secure_filename
+from celery.result import AsyncResult
 from utils.cache import cache_delete, cache_get_json, cache_set_json, delete_pattern
 
 
@@ -39,6 +44,88 @@ def parse_optional_datetime(value):
     if not value:
         return None
     return parse_deadline(value)
+
+
+def allowed_pdf(file_storage):
+    if not file_storage or not file_storage.filename:
+        return False
+    return file_storage.filename.lower().endswith(".pdf")
+
+
+def save_uploaded_pdf(file_storage, folder, filename):
+    if not allowed_pdf(file_storage):
+        raise ValueError("Only PDF files are accepted")
+
+    file_storage.seek(0, os.SEEK_END)
+    size = file_storage.tell()
+    file_storage.seek(0)
+    if size <= 0:
+        raise ValueError("Uploaded PDF is empty")
+    if size > 8 * 1024 * 1024:
+        raise ValueError("PDF must be smaller than 8 MB")
+
+    os.makedirs(folder, exist_ok=True)
+    safe_name = secure_filename(filename)
+    path = os.path.join(folder, safe_name)
+    file_storage.save(path)
+    return path
+
+
+def send_application_email(application, subject, body):
+    student = application.student
+    if student and student.user and student.user.email:
+        send_email(student.user.email, subject, body)
+
+
+def record_status(application, status, feedback=None):
+    db.session.add(ApplicationStatusHistory(
+        application_id=application.id,
+        status="Offer" if status == "Selected" else status,
+        feedback=feedback,
+    ))
+
+
+def serialize_applicant(application, company):
+    job = application.job
+    student = application.student
+    if not job or job.company_id != company.id:
+        return None
+
+    match = calculate_candidate_match(student, job) if student else {}
+    interview = Interview.query.filter_by(application_id=application.id).first()
+    return {
+        "application_id": application.id,
+        "job_id": job.id,
+        "job_title": job.title,
+        "student_id": student.id if student else None,
+        "student_name": student.name if student else "Deleted User",
+        "student_contact": student.contact if student else None,
+        "student_branch": student.branch if student else None,
+        "student_year": student.year if student else None,
+        "student_degree": student.degree if student else None,
+        "student_institution": student.institution if student else None,
+        "student_cgpa": student.cgpa if student else None,
+        "student_skills": student.skills if student else None,
+        "student_experience": student.experience if student else None,
+        "has_resume": bool(student and student.resume_path),
+        "resume_filename": student.resume_filename if student else None,
+        "status": "Offer" if application.status == "Selected" else application.status,
+        "feedback": application.notes,
+        "application_date": application.application_date.isoformat() if application.application_date else None,
+        "match": match,
+        "interview": {
+            "interview_date": interview.interview_date.isoformat(),
+            "interview_link": interview.interview_link,
+            "venue": interview.venue,
+            "notes": interview.notes,
+        } if interview else None,
+        "offer": {
+            "salary": application.offer_salary,
+            "joining_date": application.offer_joining_date.isoformat() if application.offer_joining_date else None,
+            "remarks": application.offer_remarks,
+            "has_letter": bool(application.offer_letter_path),
+        } if application.offer_salary is not None or application.offer_letter_path else None,
+    }
 
 
 def get_company_job(company, job_id):
@@ -165,21 +252,30 @@ class CompanyDashboard(Resource):
         job_ids = [job.id for job in jobs]
 
         total_applications = 0
-        shortlisted_count = 0
-        selected_count = 0
+        pipeline_counts = {status: 0 for status in ["Applied", "Shortlisted", "Interview", "Offer", "Placed", "Rejected"]}
 
         if job_ids:
             total_applications = Application.query.filter(
                 Application.job_id.in_(job_ids)
             ).count()
-            shortlisted_count = Application.query.filter(
-                Application.job_id.in_(job_ids),
-                Application.status == "Shortlisted",
-            ).count()
-            selected_count = Application.query.filter(
-                Application.job_id.in_(job_ids),
-                Application.status.in_(["Selected", "Placed"]),
-            ).count()
+            for application in Application.query.filter(Application.job_id.in_(job_ids)).all():
+                status = "Offer" if application.status == "Selected" else application.status
+                if status in pipeline_counts:
+                    pipeline_counts[status] += 1
+
+        upcoming_interviews = []
+        for interview in Interview.query.join(Application).join(JobPosition).filter(
+            JobPosition.company_id == company.id,
+            Interview.interview_date >= datetime.now(timezone.utc),
+        ).order_by(Interview.interview_date.asc()).limit(5).all():
+            upcoming_interviews.append({
+                "application_id": interview.application_id,
+                "student_name": interview.application.student.name if interview.application.student else "Unknown",
+                "job_title": interview.application.job.title if interview.application.job else "Unknown",
+                "interview_date": interview.interview_date.isoformat(),
+                "venue": interview.venue,
+                "interview_link": interview.interview_link,
+            })
 
         return {
             "company_id": company.id,
@@ -193,8 +289,11 @@ class CompanyDashboard(Resource):
             "pending_jobs": sum(1 for job in jobs if job.status == "Pending"),
             "closed_jobs": sum(1 for job in jobs if job.status == "Closed"),
             "total_applications": total_applications,
-            "shortlisted_count": shortlisted_count,
-            "selected_count": selected_count,
+            "shortlisted_count": pipeline_counts["Shortlisted"],
+            "selected_count": pipeline_counts["Offer"] + pipeline_counts["Placed"],
+            "pipeline_counts": pipeline_counts,
+            "upcoming_interviews": upcoming_interviews,
+            "pending_actions": pipeline_counts["Applied"] + pipeline_counts["Shortlisted"],
             "placement_drives": [
                 {
                     "job_id": job.id,
@@ -254,29 +353,30 @@ class ViewApplicants(Resource):
         if job_error:
             return job_error
 
-        apps = Application.query.filter_by(job_id=job.id).all()
-        result = []
-        for application in apps:
-            student = db.session.get(StudentProfile, application.student_id)
-            result.append(
-                {
-                    "application_id": application.id,
-                    "student_id": application.student_id,
-                    "student_name": student.name if student else "Deleted User",
-                    "student_contact": student.contact if student else None,
-                    "student_branch": student.branch if student else None,
-                    "student_year": student.year if student else None,
-                    "student_cgpa": student.cgpa if student else None,
-                    "student_skills": student.skills if student else None,
-                    "status": application.status,
-                    "application_date": application.application_date.isoformat()
-                    if application.application_date
-                    else None,
-                    "notes": application.notes,
-                }
-            )
+        return [serialize_applicant(application, company) for application in Application.query.filter_by(job_id=job.id).all()], 200
 
-        return result, 200
+
+class CompanyApplicants(Resource):
+    @jwt_required(role="company")
+    def get(self):
+        company = g.current_company
+        query = Application.query.join(JobPosition).filter(JobPosition.company_id == company.id)
+
+        job_id = request.args.get("job_id", type=int)
+        status_filter = request.args.get("status", "").strip()
+        search = request.args.get("search", "").strip()
+        if job_id:
+            query = query.filter(Application.job_id == job_id)
+        if status_filter:
+            if status_filter == "Offer":
+                query = query.filter(Application.status.in_(["Offer", "Selected"]))
+            else:
+                query = query.filter(Application.status == status_filter)
+        if search:
+            query = query.join(StudentProfile).filter(StudentProfile.name.ilike(f"%{search}%"))
+
+        result = [serialize_applicant(application, company) for application in query.order_by(Application.application_date.desc()).all()]
+        return [item for item in result if item], 200
 
 
 class CompanyJobs(Resource):
@@ -381,9 +481,9 @@ class UpdateApplicationStatus(Resource):
         status = data.get("status")
         valid_transitions = {
             "Applied": ["Shortlisted", "Rejected"],
-            "Shortlisted": ["Interview", "Rejected"],
-            "Interview": ["Offer", "Selected", "Rejected"],
-            "Offer": ["Placed", "Rejected"],
+            "Shortlisted": ["Rejected"],
+            "Interview": ["Rejected"],
+            "Offer": ["Rejected"],
             "Selected": ["Placed", "Rejected"],
         }
         allowed = valid_transitions.get(application.status, [])
@@ -393,38 +493,136 @@ class UpdateApplicationStatus(Resource):
                 "allowed": allowed,
             }, 400
 
+        feedback = data.get("feedback", data.get("notes"))
+        if status == "Rejected" and not str(feedback or "").strip():
+            return {"error": "Feedback is required when rejecting an applicant"}, 400
+
         application.status = status
-        if "notes" in data:
-            application.notes = data.get("notes")
-
-        placement = Placement.query.filter_by(application_id=application.id).first()
-        if status in ["Selected", "Placed"]:
-            if not placement:
-                placement = Placement(
-                    application_id=application.id,
-                    student_id=application.student_id,
-                    company_id=job.company_id,
-                    position=job.title,
-                    salary=job.salary,
-                )
-                db.session.add(placement)
-
-            if "position" in data:
-                placement.position = data.get("position")
-            if "salary" in data:
-                placement.salary = data.get("salary")
-            if "joining_date" in data:
-                placement.joining_date = parse_optional_datetime(data.get("joining_date"))
-            if "offer_letter" in data:
-                placement.offer_letter = data.get("offer_letter")
-            if "remarks" in data:
-                placement.remarks = data.get("remarks")
-        elif status == "Rejected" and placement:
-            db.session.delete(placement)
-
+        if feedback is not None:
+            application.notes = str(feedback).strip()
+        if status == "Placed" and not Placement.query.filter_by(application_id=application.id).first():
+            db.session.add(Placement(
+                application_id=application.id,
+                student_id=application.student_id,
+                company_id=job.company_id,
+                position=job.title,
+                salary=job.salary,
+            ))
+        record_status(application, status, application.notes)
         db.session.commit()
 
+        send_application_email(
+            application,
+            f"Application update: {job.title} - {status}",
+            f"Your application for {job.title} at {company.name} is now marked as {status}.\n\n"
+            f"Feedback: {application.notes or 'No additional feedback was provided.'}\n\n"
+            "Please sign in to HireTrack for the full application details.",
+        )
+
         return {"message": "Application status updated"}, 200
+
+
+class CreateOffer(Resource):
+    @jwt_required(role="company")
+    def post(self, application_id):
+        company = g.current_company
+        application = db.session.get(Application, application_id)
+        if not application:
+            return {"error": "Application not found"}, 404
+
+        job = db.session.get(JobPosition, application.job_id)
+        if not job or job.company_id != company.id:
+            return {"error": "Unauthorized"}, 403
+        if application.status != "Interview":
+            return {"error": "An offer can only be created after an interview"}, 400
+
+        salary_value = request.form.get("salary", "").strip()
+        try:
+            salary = int(salary_value) if salary_value else job.salary
+        except ValueError:
+            return {"error": "Salary must be a whole number"}, 400
+
+        joining_date = parse_optional_datetime(request.form.get("joining_date"))
+        if request.form.get("joining_date") and not joining_date:
+            return {"error": "Invalid joining_date"}, 400
+
+        feedback = request.form.get("feedback", "").strip()
+        if not feedback:
+            return {"error": "Offer feedback is required"}, 400
+
+        offer_letter = request.files.get("offer_letter")
+        if not allowed_pdf(offer_letter):
+            return {"error": "A PDF offer letter is required"}, 400
+
+        offer_folder = os.path.join(current_app.config["UPLOAD_FOLDER"], "offers")
+        offer_filename = f"offer_application_{application.id}.pdf"
+        try:
+            offer_path = save_uploaded_pdf(offer_letter, offer_folder, offer_filename)
+        except ValueError as error:
+            return {"error": str(error)}, 400
+
+        application.status = "Offer"
+        application.notes = feedback
+        application.offer_salary = salary
+        application.offer_joining_date = joining_date
+        application.offer_remarks = request.form.get("remarks", "").strip() or None
+        application.offer_letter_path = offer_path
+        record_status(application, "Offer", feedback)
+        db.session.commit()
+
+        send_application_email(
+            application,
+            f"You received an offer for {job.title}",
+            f"{company.name} has shared an offer for {job.title}.\n\n"
+            f"Salary: {salary or 'Not specified'}\n"
+            f"Joining date: {joining_date.isoformat() if joining_date else 'Not specified'}\n"
+            f"Feedback: {feedback}\n\n"
+            "Sign in to HireTrack to review and download the offer letter.",
+        )
+        return {"message": "Offer created", "status": "Offer"}, 201
+
+
+class PlaceCandidate(Resource):
+    @jwt_required(role="company")
+    def post(self, application_id):
+        company = g.current_company
+        application = db.session.get(Application, application_id)
+        if not application:
+            return {"error": "Application not found"}, 404
+        job = db.session.get(JobPosition, application.job_id)
+        if not job or job.company_id != company.id:
+            return {"error": "Unauthorized"}, 403
+        if application.status != "Offer":
+            return {"error": "Only offered candidates can be placed"}, 400
+
+        data = request.get_json(silent=True) or {}
+        joining_date = parse_optional_datetime(data.get("joining_date")) or application.offer_joining_date
+        placement = Placement.query.filter_by(application_id=application.id).first()
+        if not placement:
+            placement = Placement(
+                application_id=application.id,
+                student_id=application.student_id,
+                company_id=company.id,
+                position=job.title,
+            )
+            db.session.add(placement)
+
+        placement.salary = application.offer_salary or job.salary
+        placement.joining_date = joining_date
+        placement.remarks = data.get("remarks") or application.offer_remarks
+        placement.offer_letter = application.offer_letter_path
+        application.status = "Placed"
+        record_status(application, "Placed", placement.remarks)
+        db.session.commit()
+
+        send_application_email(
+            application,
+            f"Placement confirmed: {job.title}",
+            f"Your placement for {job.title} at {company.name} has been confirmed.\n\n"
+            f"Joining date: {joining_date.isoformat() if joining_date else 'Not specified'}\n\n"
+            "Please sign in to HireTrack for your placement record.",
+        )
+        return {"message": "Candidate marked as placed", "status": "Placed"}, 200
 
 
 class CandidateMatchScores(Resource):
@@ -550,10 +748,19 @@ class ScheduleInterview(Resource):
         application.status = "Interview"
         if data.get("notes"):
             application.notes = data.get("notes")
+        record_status(application, "Interview", application.notes)
         db.session.commit()
 
-        return {"message": "Interview scheduled", "interview_id": interview.id}, 201
+        send_application_email(
+            application,
+            f"Interview scheduled: {job.title}",
+            f"Your interview for {job.title} at {company.name} is scheduled for {interview_date.isoformat()}.\n\n"
+            f"Link: {interview.interview_link or 'Not specified'}\n"
+            f"Venue: {interview.venue or 'Not specified'}\n"
+            f"Notes: {interview.notes or 'None'}",
+        )
 
+        return {"message": "Interview scheduled", "interview_id": interview.id}, 201
 
 class GetInterviewsForJob(Resource):
     @jwt_required(role="company")
@@ -589,6 +796,55 @@ class GetInterviewsForJob(Resource):
         return result, 200
 
 
+class CompanyInterviews(Resource):
+    @jwt_required(role="company")
+    def get(self):
+        company = g.current_company
+        job_id = request.args.get("job_id", type=int)
+        query = Interview.query.join(Application).join(JobPosition).filter(
+            JobPosition.company_id == company.id
+        )
+        if job_id:
+            query = query.filter(JobPosition.id == job_id)
+
+        result = []
+        for interview in query.order_by(Interview.interview_date.asc()).all():
+            application = interview.application
+            job = application.job
+            student = application.student
+            result.append({
+                "interview_id": interview.id,
+                "application_id": application.id,
+                "job_id": job.id if job else None,
+                "job_title": job.title if job else "Unknown",
+                "student_name": student.name if student else "Unknown",
+                "interview_date": interview.interview_date.isoformat(),
+                "interview_link": interview.interview_link,
+                "venue": interview.venue,
+                "notes": interview.notes,
+                "application_status": "Offer" if application.status == "Selected" else application.status,
+            })
+        return result, 200
+
+
+class CompanyResume(Resource):
+    @jwt_required(role="company")
+    def get(self, application_id):
+        company = g.current_company
+        application = db.session.get(Application, application_id)
+        if not application or not application.job or application.job.company_id != company.id:
+            return {"error": "Application not found"}, 404
+        student = application.student
+        if not student or not student.resume_path or not os.path.isfile(student.resume_path):
+            return {"error": "Resume not available"}, 404
+        return send_file(
+            student.resume_path,
+            mimetype="application/pdf",
+            as_attachment=True,
+            download_name=student.resume_filename or f"resume_student_{student.id}.pdf",
+        )
+
+
 class CloseJob(Resource):
     @jwt_required(role="company")
     def patch(self, job_id):
@@ -617,3 +873,27 @@ class ExportCompanyApplications(Resource):
 
         task = export_company_applications.delay(company.id)
         return {"task_id": task.id}, 202
+
+
+class CompanyExportDownload(Resource):
+    @jwt_required(role="company")
+    def get(self, task_id):
+        company = g.current_company
+        from celery_worker import celery_app
+
+        task_result = AsyncResult(task_id, app=celery_app)
+        if not task_result.successful():
+            return {"error": "Export is not ready"}, 409
+
+        result = task_result.result or {}
+        file_path = result.get("file_path") if isinstance(result, dict) else None
+        expected_prefix = f"applications_company_{company.id}_"
+        if not file_path or not os.path.basename(file_path).startswith(expected_prefix):
+            return {"error": "Export not found"}, 404
+
+        export_folder = os.path.abspath(current_app.config["EXPORT_FOLDER"])
+        safe_path = os.path.abspath(file_path)
+        if not safe_path.startswith(export_folder + os.sep) or not os.path.isfile(safe_path):
+            return {"error": "Export not found"}, 404
+
+        return send_file(safe_path, mimetype="text/csv", as_attachment=True, download_name=os.path.basename(safe_path))

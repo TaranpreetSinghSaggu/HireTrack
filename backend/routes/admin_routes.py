@@ -101,7 +101,7 @@ class PublicDashboard(Resource):
             for status in ("Applied", "Shortlisted", "Interview", "Offer", "Selected", "Placed")
         }
         active_jobs = JobPosition.query.filter_by(status="Approved").count()
-        placements = Placement.query.count()
+        placements = Placement.query.join(Application).filter(Application.status == "Placed").count()
         students = StudentProfile.query.count()
 
         recent_jobs = (
@@ -437,20 +437,18 @@ class PlacementAnalytics(Resource):
         total_jobs = JobPosition.query.count()
         total_applications = Application.query.count()
 
-        placement_count = Placement.query.count()
-        selected_count = Application.query.filter(
-            Application.status.in_(["Selected", "Placed"])
-        ).count()
-        total_selected = placement_count if placement_count > 0 else selected_count
+        placement_count = Placement.query.join(Application).filter(Application.status == "Placed").count()
+        total_selected = Application.query.filter(Application.status == "Offer").count()
+        total_placed = placement_count
 
         placement_rate = 0
         if total_students > 0:
-            placement_rate = round((total_selected / total_students) * 100, 2)
+            placement_rate = round((total_placed / total_students) * 100, 2)
 
         top_companies = []
         if placement_count > 0:
             company_hires = {}
-            placements = Placement.query.all()
+            placements = Placement.query.join(Application).filter(Application.status == "Placed").all()
             for placement in placements:
                 company = db.session.get(CompanyProfile, placement.company_id)
                 if not company:
@@ -481,6 +479,7 @@ class PlacementAnalytics(Resource):
             "total_jobs": total_jobs,
             "total_applications": total_applications,
             "total_selected": total_selected,
+            "total_placed": total_placed,
             "placement_rate": placement_rate,
             "top_companies": top_companies,
             "recent_activity": recent_activity,

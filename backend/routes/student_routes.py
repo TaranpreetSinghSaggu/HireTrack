@@ -1,13 +1,15 @@
 from datetime import datetime, timezone
 from io import BytesIO
+import os
 import json
 import re
 import requests
 
-from flask import current_app, g, request
+from flask import current_app, g, request, send_file
 from flask_restful import Resource
+from werkzeug.utils import secure_filename
 
-from models import db, StudentProfile, JobPosition, Application, CompanyProfile, Interview, Placement
+from models import db, StudentProfile, JobPosition, Application, ApplicationStatusHistory, CompanyProfile, Interview, Placement
 from utils.auth_decorators import jwt_required
 from utils.resume_ai import analyze_resume_ai
 from utils.gemini import generate_gemini_content
@@ -238,6 +240,7 @@ def serialize_student_profile(student):
         "passout_year": student.passout_year,
         "experience": student.experience,
         "resume_filename": student.resume_filename,
+        "has_resume": bool(student.resume_path),
     }
 
 
@@ -451,7 +454,8 @@ class StudentDashboard(Resource):
             1 for application in applications
             if application.status in ["Selected", "Offer", "Placed"]
         )
-        placed_count = Placement.query.filter_by(student_id=student.id).count()
+        offer_count = sum(1 for application in applications if application.status == "Offer")
+        placed_count = sum(1 for application in applications if application.status == "Placed")
 
         recent_jobs = []
         jobs = JobPosition.query.filter_by(status="Approved").order_by(
@@ -478,6 +482,7 @@ class StudentDashboard(Resource):
                 "applications": len(applications),
                 "interviews": interviews_count,
                 "selected": selected_count,
+                "offers": offer_count,
                 "placed": placed_count,
             },
             "recent_jobs": recent_jobs,
@@ -517,6 +522,8 @@ class ApplyJob(Resource):
         app = Application(student_id=student.id, job_id=job_id)
         db.session.add(app)
         db.session.commit()
+        db.session.add(ApplicationStatusHistory(application_id=app.id, status="Applied"))
+        db.session.commit()
 
         return {"message": "Applied successfully"}, 201
 
@@ -541,11 +548,30 @@ class ViewApplications(Resource):
                     "job_id": application.job_id,
                     "job_title": job.title if job else "Unknown",
                     "company_name": company.name if company else "Unknown",
-                    "status": application.status,
+                    "status": "Offer" if application.status == "Selected" else application.status,
                     "application_date": application.application_date.isoformat()
                     if application.application_date
                     else None,
                     "notes": application.notes,
+                    "history": [
+                        {
+                            "status": history.status,
+                            "feedback": history.feedback,
+                            "created_at": history.created_at.isoformat() if history.created_at else None,
+                        }
+                        for history in application.status_history
+                    ] or [{
+                        "status": "Offer" if application.status == "Selected" else application.status,
+                        "feedback": application.notes,
+                        "created_at": application.application_date.isoformat() if application.application_date else None,
+                    }],
+                    "offer": {
+                        "salary": application.offer_salary,
+                        "joining_date": application.offer_joining_date.isoformat()
+                        if application.offer_joining_date else None,
+                        "remarks": application.offer_remarks,
+                        "has_letter": bool(application.offer_letter_path),
+                    } if application.offer_salary is not None or application.offer_letter_path else None,
                     "interview": {
                         "interview_date": interview.interview_date.isoformat(),
                         "interview_link": interview.interview_link,
@@ -674,6 +700,7 @@ class UploadResume(Resource):
     def post(self):
         student = g.current_student
 
+        uploaded_file = request.files.get("resume")
         try:
             resume_text, original_filename = get_resume_text_from_request()
         except ValueError as error:
@@ -705,9 +732,16 @@ class UploadResume(Resource):
         if parsed_data["experience"]:
             student.experience = parsed_data["experience"]
 
-        student.resume_filename = original_filename or (
+        student.resume_filename = secure_filename(original_filename) if original_filename else (
             f"resume_student_{student.id}_{utc_now().strftime('%Y%m%d%H%M%S')}.txt"
         )
+        if uploaded_file and uploaded_file.filename:
+            resume_folder = os.path.join(current_app.config["UPLOAD_FOLDER"], "resumes")
+            os.makedirs(resume_folder, exist_ok=True)
+            stored_name = f"resume_student_{student.id}.pdf"
+            uploaded_file.seek(0)
+            uploaded_file.save(os.path.join(resume_folder, stored_name))
+            student.resume_path = os.path.join(resume_folder, stored_name)
         db.session.commit()
 
         return {
@@ -724,6 +758,22 @@ class UploadResume(Resource):
             "experience": parsed_data["experience"],
             "resume_filename": student.resume_filename,
         }, 200
+
+
+class StudentOfferLetter(Resource):
+    @jwt_required(role="student")
+    def get(self, application_id):
+        application = db.session.get(Application, application_id)
+        if not application or application.student_id != g.current_student.id:
+            return {"error": "Application not found"}, 404
+        if not application.offer_letter_path or not os.path.isfile(application.offer_letter_path):
+            return {"error": "Offer letter not available"}, 404
+        return send_file(
+            application.offer_letter_path,
+            mimetype="application/pdf",
+            as_attachment=True,
+            download_name=f"offer_{application.id}.pdf",
+        )
 
 
 class StudentJobReadiness(Resource):
@@ -935,7 +985,7 @@ class StudentPlacements(Resource):
                     "placed_date": placement.placed_date.isoformat()
                     if placement.placed_date
                     else None,
-                    "offer_letter": placement.offer_letter,
+                    "offer_letter": bool(placement.offer_letter),
                     "remarks": placement.remarks,
                 }
             )
@@ -963,7 +1013,13 @@ class TaskStatus(Resource):
 
         response = {"status": task_result.status}
         if task_result.successful():
-            response["result"] = task_result.result
+            result = task_result.result
+            if isinstance(result, dict):
+                response["result"] = {
+                    key: value for key, value in result.items() if key != "file_path"
+                }
+            else:
+                response["result"] = result
         elif task_result.failed():
             response["result"] = str(task_result.result)
 

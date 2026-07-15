@@ -17,8 +17,35 @@ def add_missing_sqlite_columns():
         for row in db.session.execute(db.text("PRAGMA table_info(job_positions)"))
     }
 
-    if "benefits" not in existing_columns:
-        db.session.execute(db.text("ALTER TABLE job_positions ADD COLUMN benefits TEXT"))
+    migrations = {
+        "benefits": "ALTER TABLE job_positions ADD COLUMN benefits TEXT",
+        "resume_path": "ALTER TABLE student_profiles ADD COLUMN resume_path VARCHAR(500)",
+        "offer_salary": "ALTER TABLE applications ADD COLUMN offer_salary INTEGER",
+        "offer_joining_date": "ALTER TABLE applications ADD COLUMN offer_joining_date DATETIME",
+        "offer_remarks": "ALTER TABLE applications ADD COLUMN offer_remarks TEXT",
+        "offer_letter_path": "ALTER TABLE applications ADD COLUMN offer_letter_path VARCHAR(500)",
+    }
+
+    table_columns = {}
+    for table in ("job_positions", "student_profiles", "applications"):
+        table_columns[table] = {
+            row[1]
+            for row in db.session.execute(db.text(f"PRAGMA table_info({table})"))
+        }
+
+    changes = [
+        ("job_positions", "benefits"),
+        ("student_profiles", "resume_path"),
+        ("applications", "offer_salary"),
+        ("applications", "offer_joining_date"),
+        ("applications", "offer_remarks"),
+        ("applications", "offer_letter_path"),
+    ]
+    for table, column in changes:
+        if column not in table_columns[table]:
+            db.session.execute(db.text(migrations[column]))
+
+    if any(column not in table_columns[table] for table, column in changes):
         db.session.commit()
 
 def create_app():
@@ -33,8 +60,8 @@ def create_app():
 
     # IMPORT ROUTES
     from routes.auth import RegisterStudent, RegisterCompany, Login, AuthMe
-    from routes.student_routes import StudentDashboard, ApplyJob, ViewApplications, StudentJobs, StudentJobDetail, UpdateStudentProfile, UploadResume, StudentJobReadiness, InterviewQuestions, StudentStrategy, ApplicationAnalysis, StudentInterviews, StudentPlacements, ExportApplications, TaskStatus
-    from routes.company_routes import CompanyDashboard, CreateJob, ViewApplicants, CompanyJobs, UpdateCompanyJob, UpdateApplicationStatus, CandidateMatchScores, MarketInsight, JobInterviewQuestions, ScheduleInterview, GetInterviewsForJob, CloseJob, ExportCompanyApplications
+    from routes.student_routes import StudentDashboard, ApplyJob, ViewApplications, StudentJobs, StudentJobDetail, UpdateStudentProfile, UploadResume, StudentJobReadiness, InterviewQuestions, StudentStrategy, ApplicationAnalysis, StudentInterviews, StudentPlacements, ExportApplications, StudentOfferLetter, TaskStatus
+    from routes.company_routes import CompanyDashboard, CreateJob, ViewApplicants, CompanyApplicants, CompanyJobs, UpdateCompanyJob, UpdateApplicationStatus, CandidateMatchScores, MarketInsight, JobInterviewQuestions, ScheduleInterview, GetInterviewsForJob, CompanyInterviews, CreateOffer, PlaceCandidate, CompanyResume, CloseJob, ExportCompanyApplications, CompanyExportDownload
     from routes.admin_routes import AdminDashboard, PublicDashboard, ViewCompanies, ViewStudents, ApproveCompany, RemoveCompany, ApproveJob, RejectJob, ViewJobs, ViewAllApplications, BlacklistCompany, UpdateUserStatus, ExportAdminReport, PlacementAnalytics
 
     # AUTH
@@ -58,11 +85,13 @@ def create_app():
     api.add_resource(StudentInterviews, "/api/student/interviews")
     api.add_resource(StudentPlacements, "/api/student/placements")
     api.add_resource(ExportApplications, "/api/student/export")
+    api.add_resource(StudentOfferLetter, "/api/student/applications/<int:application_id>/offer-letter")
 
     # COMPANY
     api.add_resource(CompanyDashboard, "/api/company/dashboard")
     api.add_resource(CreateJob, "/api/company/create-job")
     api.add_resource(ViewApplicants, "/api/company/applicants/<int:job_id>")
+    api.add_resource(CompanyApplicants, "/api/company/applicants")
     api.add_resource(CompanyJobs, "/api/company/jobs")
     api.add_resource(UpdateCompanyJob, "/api/company/jobs/<int:job_id>")
     api.add_resource(UpdateApplicationStatus, "/api/company/applications/<int:application_id>/status")
@@ -71,8 +100,13 @@ def create_app():
     api.add_resource(JobInterviewQuestions, "/api/company/jobs/<int:job_id>/questions")
     api.add_resource(ScheduleInterview, "/api/company/applications/<int:application_id>/schedule-interview")
     api.add_resource(GetInterviewsForJob, "/api/company/jobs/<int:job_id>/interviews")
+    api.add_resource(CompanyInterviews, "/api/company/interviews")
+    api.add_resource(CreateOffer, "/api/company/applications/<int:application_id>/offer")
+    api.add_resource(PlaceCandidate, "/api/company/applications/<int:application_id>/place")
+    api.add_resource(CompanyResume, "/api/company/applications/<int:application_id>/resume")
     api.add_resource(CloseJob, "/api/company/jobs/<int:job_id>/close")
     api.add_resource(ExportCompanyApplications, "/api/company/export")
+    api.add_resource(CompanyExportDownload, "/api/company/export/<string:task_id>/download")
 
     # ADMIN
     api.add_resource(PublicDashboard, "/api/dashboard")

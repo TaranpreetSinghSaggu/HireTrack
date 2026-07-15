@@ -74,7 +74,7 @@ const routes = [
       { path: "jobs", component: () => import("@/views/company/Jobs.vue") },
       {
         path: "jobs/new",
-        component: () => import("@/views/company/JobWizard.vue"),
+        component: () => import("@/views/company/JobCreate.vue"),
       },
       {
         path: "jobs/:id",
@@ -86,7 +86,7 @@ const routes = [
       },
       {
         path: "applicants",
-        component: () => import("@/views/company/ApplicantsHome.vue"),
+        component: () => import("@/views/company/Applicants.vue"),
       },
       {
         path: "interviews",

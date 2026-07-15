@@ -120,6 +120,7 @@ class StudentProfile(db.Model):
     experience = db.Column(db.Text)
 
     resume_filename = db.Column(db.String(200))
+    resume_path = db.Column(db.String(500))
     profile_pic = db.Column(db.String(200))
     resume_score = db.Column(db.Float)
 
@@ -222,6 +223,11 @@ class Application(db.Model):
 
     notes = db.Column(db.Text)
 
+    offer_salary = db.Column(db.Integer)
+    offer_joining_date = db.Column(db.DateTime)
+    offer_remarks = db.Column(db.Text)
+    offer_letter_path = db.Column(db.String(500))
+
     placement = db.relationship(
         'Placement',
         backref='application',
@@ -236,12 +242,37 @@ class Application(db.Model):
         cascade='all, delete-orphan'
     )
 
+    status_history = db.relationship(
+        'ApplicationStatusHistory',
+        backref='application',
+        lazy=True,
+        cascade='all, delete-orphan',
+        order_by='ApplicationStatusHistory.created_at',
+    )
+
     __table_args__ = (
         db.UniqueConstraint('student_id', 'job_id', name='unique_student_job'),
     )
 
     def __str__(self):
         return str(self.id)
+
+
+class ApplicationStatusHistory(db.Model):
+    __tablename__ = 'application_status_history'
+
+    id = db.Column(db.Integer, primary_key=True)
+    application_id = db.Column(
+        db.Integer,
+        db.ForeignKey('applications.id'),
+        nullable=False,
+    )
+    status = db.Column(db.String(30), nullable=False)
+    feedback = db.Column(db.Text)
+    created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
+
+    def __str__(self):
+        return f"{self.application_id}: {self.status}"
 
 
 class Placement(db.Model):

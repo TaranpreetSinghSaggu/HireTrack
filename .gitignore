@@ -1,29 +1,49 @@
 # Python
 __pycache__/
-*.pyc
+*.py[cod]
+*.pyo
 .venv/
 venv/
+env/
 
-# Flask
+# Flask and local runtime data
 instance/
+*.sqlite
 *.sqlite3
 *.db
 *.db-journal
 celerybeat-schedule
 backend/exports/
+backend/uploads/
 
-# Environment variables
+# Environment and secrets
 .env
+.env.*
+!.env.example
 frontend/.env
+frontend/.env.*
+!frontend/.env.example
 
-# Node
+# Node and frontend build output
 node_modules/
-dist/
 frontend/node_modules/
+dist/
 frontend/dist/
 
-# VS Code
-.vscode/
+# Test and tooling caches
+.pytest_cache/
+.coverage
+htmlcov/
+.eslintcache
 
-# OS
+# Editors
+.vscode/
+.idea/
+*.swp
+
+# Operating system files
 .DS_Store
+Thumbs.db
+
+# Generated reports and local documents
+Final Mad2 report.pdf

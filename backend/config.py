@@ -49,6 +49,11 @@ class Config:
         "EXPORT_FOLDER",
         os.path.join(BASE_DIR, "exports"),
     )
+    UPLOAD_FOLDER = os.getenv(
+        "UPLOAD_FOLDER",
+        os.path.join(BASE_DIR, "uploads"),
+    )
+    MAX_CONTENT_LENGTH = 8 * 1024 * 1024
 
     CELERY_BEAT_SCHEDULE = {
         "daily-deadline-reminders": {

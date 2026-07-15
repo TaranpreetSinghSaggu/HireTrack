@@ -11,9 +11,13 @@
         :value="data.total_students"
         icon="mortarboard"
       /><StatCard
-        label="Selected or placed"
+        label="Offers"
         :value="data.total_selected"
         icon="award"
+      /><StatCard
+        label="Placed"
+        :value="data.total_placed"
+        icon="person-check"
       /><StatCard
         label="Applications"
         :value="data.total_applications"

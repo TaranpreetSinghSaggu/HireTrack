@@ -6,7 +6,7 @@ export const companyApi = {
   createJob: (payload) => api.post("/company/create-job", payload),
   updateJob: (id, payload) => api.patch(`/company/jobs/${id}`, payload),
   closeJob: (id) => api.patch(`/company/jobs/${id}/close`),
-  applicants: (jobId) => api.get(`/company/applicants/${jobId}`),
+  allApplicants: (params) => api.get("/company/applicants", { params }),
   updateApplication: (applicationId, payload) =>
     api.patch(`/company/applications/${applicationId}/status`, payload),
   scheduleInterview: (applicationId, payload) =>
@@ -14,10 +14,19 @@ export const companyApi = {
       `/company/applications/${applicationId}/schedule-interview`,
       payload,
     ),
-  matchScores: (jobId) => api.get(`/company/jobs/${jobId}/match-scores`),
   marketInsight: (jobId) => api.get(`/company/jobs/${jobId}/market-insight`),
   questions: (jobId) => api.get(`/company/jobs/${jobId}/questions`),
-  interviews: (jobId) => api.get(`/company/jobs/${jobId}/interviews`),
+  allInterviews: (params) => api.get("/company/interviews", { params }),
+  createOffer: (applicationId, payload) =>
+    api.post(`/company/applications/${applicationId}/offer`, payload, {
+      headers: { "Content-Type": "multipart/form-data" },
+    }),
+  placeCandidate: (applicationId, payload) =>
+    api.post(`/company/applications/${applicationId}/place`, payload),
+  resume: (applicationId) =>
+    api.get(`/company/applications/${applicationId}/resume`, { responseType: "blob" }),
   exportApplications: () => api.post("/company/export"),
   taskStatus: (id) => api.get(`/task/${id}`),
+  downloadExport: (id) =>
+    api.get(`/company/export/${id}/download`, { responseType: "blob" }),
 };

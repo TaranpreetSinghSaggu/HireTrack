@@ -8,17 +8,16 @@ def generate_monthly_report():
     total_jobs = JobPosition.query.count()
     total_applications = Application.query.count()
 
-    placement_count = Placement.query.count()
-    selected_count = Application.query.filter(
-        Application.status.in_(["Selected", "Placed"])
-    ).count()
-    total_selected = placement_count if placement_count > 0 else selected_count
+    placement_count = Placement.query.join(Application).filter(Application.status == "Placed").count()
+    total_selected = Application.query.filter(Application.status == "Offer").count()
+    total_placed = placement_count
 
     admin_report_html = f"""
     <h2>Monthly Placement Report</h2>
     <p>Total Jobs Posted: {total_jobs}</p>
     <p>Total Applications: {total_applications}</p>
-    <p>Total Selected/Placed Students: {total_selected}</p>
+    <p>Total Offers: {total_selected}</p>
+    <p>Total Placed Students: {total_placed}</p>
     """
 
     admin_email = getattr(celery_app.conf, "ADMIN_EMAIL", "admin@ppa.com")
@@ -45,9 +44,8 @@ def generate_monthly_report():
 
         shortlisted = sum(1 for app in company_applications if app.status == "Shortlisted")
         interview = sum(1 for app in company_applications if app.status == "Interview")
-        selected = sum(
-            1 for app in company_applications if app.status in ["Selected", "Placed"]
-        )
+        selected = sum(1 for app in company_applications if app.status == "Offer")
+        placed = sum(1 for app in company_applications if app.status == "Placed")
         rejected = sum(1 for app in company_applications if app.status == "Rejected")
 
         company_report_html = f"""
@@ -56,7 +54,8 @@ def generate_monthly_report():
         <p>Total Applications Received: {len(company_applications)}</p>
         <p>Shortlisted: {shortlisted}</p>
         <p>Interview: {interview}</p>
-        <p>Selected/Placed: {selected}</p>
+        <p>Offers: {selected}</p>
+        <p>Placed: {placed}</p>
         <p>Rejected: {rejected}</p>
         """
 
@@ -72,5 +71,6 @@ def generate_monthly_report():
         "total_jobs": total_jobs,
         "total_applications": total_applications,
         "total_selected": total_selected,
+        "total_placed": total_placed,
         "company_reports_sent": company_reports_sent,
     }

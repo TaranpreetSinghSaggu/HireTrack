@@ -14,8 +14,9 @@
       <option>Offer</option>
       <option>Selected</option>
       <option>Placed</option>
-      <option>Rejected</option></select
-    /><AppButton label="Filter" icon="search" @click="load" />
+      <option>Rejected</option>
+    </select>
+    <AppButton label="Filter" icon="search" @click="load" />
   </div>
   <LoadingState v-if="loading" />
   <div v-else class="table-wrap">

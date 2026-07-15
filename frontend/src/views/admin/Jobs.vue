@@ -9,8 +9,9 @@
       <option value="">All statuses</option>
       <option>Pending</option>
       <option>Approved</option>
-      <option>Closed</option></select
-    /><AppButton label="Filter" icon="search" @click="load" />
+      <option>Closed</option>
+    </select>
+    <AppButton label="Filter" icon="search" @click="load" />
   </div>
   <LoadingState v-if="loading" />
   <div v-else class="table-wrap">

@@ -14,6 +14,8 @@ export const studentApi = {
   applicationAnalysis: (id) => api.get(`/student/applications/${id}/analysis`),
   interviews: () => api.get("/student/interviews"),
   placements: () => api.get("/student/placements"),
+  offerLetter: (id) =>
+    api.get(`/student/applications/${id}/offer-letter`, { responseType: "blob" }),
   questions: (skill) =>
     api.get("/student/interview-questions", { params: { skill } }),
   exportApplications: () => api.post("/student/export"),
